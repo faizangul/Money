@@ -1,0 +1,29 @@
+{
+  "name": "money-tracker",
+  "version": "1.0.0",
+  "description": "Money Tracker – Australian-first personal finance app",
+  "scripts": {
+    "build:web": "node scripts/build-web.mjs",
+    "sync": "npm run build:web && cap sync ios",
+    "open:ios": "cap open ios"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/faizangul/Money.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/faizangul/Money/issues"
+  },
+  "homepage": "https://github.com/faizangul/Money#readme",
+  "dependencies": {
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/ios": "^8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.5.3"
+  },
+  "private": true
+}

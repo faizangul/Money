@@ -1,0 +1,8 @@
+{
+  "appId": "com.faizangul.moneytracker",
+  "appName": "Money Tracker",
+  "webDir": "www",
+  "ios": {
+    "contentInset": "never"
+  }
+}
