@@ -27,6 +27,37 @@ const CAP=window.Capacitor;
 const PLATFORM=window.claude&&typeof window.claude.use==="function"?"claude"
   :CAP&&CAP.isNativePlatform&&CAP.isNativePlatform()&&CAP.nativePromise?"ios":"web";
 window.__platform=PLATFORM;
+/* Backup files: one format for all three versions, so people can move between them.
+   Format 2 is {app:"money-tracker",format:2,exported,from,store}, where store maps "app/config", "tx/<id>"
+   and "props/<id>" to their documents. read() also takes the two older files: the phone and web backup
+   (format 1, same store) and the one made inside Claude ({app,v:1,at,config,tx,props}). */
+const BK_FORMAT=2,NOT_BACKUP="That file isn't a Money Tracker backup.";
+const BK_TYPES=["Expense","Income","Transfer","IOU out","IOU in"];/* same as TYPES in the app */
+const bkId=id=>typeof id==="string"&&/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(id)&&id!=="."&&id!=="..";
+const BACKUP={
+  make:(store,from)=>({app:"money-tracker",format:BK_FORMAT,exported:new Date().toISOString(),from,store}),
+  /* parsed file in; {store,exported,n} or {err} out */
+  read(d){
+    if(!d||typeof d!=="object"||d.app!=="money-tracker")return{err:NOT_BACKUP};
+    if(typeof d.format==="number"&&d.format>BK_FORMAT)return{err:"This backup was made by a newer version of Money Tracker. Update the app, then try again."};
+    let store={};
+    if(d.store&&typeof d.store==="object"&&!Array.isArray(d.store)){
+      for(const k of Object.keys(d.store))if(k==="app/config"||/^(tx|props)\/[^/]+$/.test(k)&&bkId(k.slice(k.indexOf("/")+1)))store[k]=d.store[k];
+    }else if(d.config&&Array.isArray(d.tx)){
+      /* Claude backup: lists with ids; an unusable id gets a new one, as restoring it always did */
+      let n=0;const fresh=c=>{let k;do k=c+"/r"+Date.now().toString(36)+(n++);while(store[k]);return k};
+      const add=(c,x)=>{if(!x||typeof x!=="object"){store[fresh(c)]=x;return}const{id,...rest}=x;store[bkId(id)&&!store[c+"/"+id]?c+"/"+id:fresh(c)]=rest};
+      store["app/config"]=d.config;d.tx.forEach(t=>add("tx",t));(Array.isArray(d.props)?d.props:[]).forEach(p=>add("props",p));
+    }else return{err:NOT_BACKUP};
+    const c=store["app/config"];
+    if(!c||typeof c!=="object"||!Array.isArray(c.accounts)||!Array.isArray(c.categories))return{err:NOT_BACKUP};
+    const tx=Object.keys(store).filter(k=>k.startsWith("tx/")).map(k=>store[k]);
+    const bad=tx.filter(t=>!t||typeof t!=="object"||!/^\d{4}-\d{2}-\d{2}$/.test(String(t.date||""))||!BK_TYPES.includes(t.type)).length;
+    if(bad)return{err:`The backup has ${bad} damaged transaction${bad===1?"":"s"}, so it wasn't used.`};
+    return{store,exported:d.exported||d.at||"",n:tx.length};
+  }
+};
+window.__backup=BACKUP;
 /* Inside Claude, window.claude is Claude's own storage: leave it, and everything below, alone */
 if(PLATFORM==="claude")return;
 const NATIVE=PLATFORM==="ios";
@@ -177,7 +208,7 @@ function countTx(s){return Object.keys(s).filter(k=>/^tx\/[^/]+$/.test(k)).lengt
 function ago(ts){if(!ts)return"never";const d=Math.floor((Date.now()-ts)/864e5);return d<=0?"today":d===1?"yesterday":d+" days ago"}
 async function backup(){
   if(busy)return;busy=true;
-  const body=JSON.stringify({app:"money-tracker",format:1,exported:new Date().toISOString(),store});
+  const body=JSON.stringify(BACKUP.make(store,PLATFORM));
   try{await saveFile("money-tracker-backup-"+stamp()+".json",body,"application/json");meta.lastBackup=Date.now();meta.changes=0;saveMeta();msg="Backup saved. Keep it in iCloud Drive so it survives a lost phone."}
   catch(e){msg=e&&e.code==="declined"?"":"Couldn't save the backup. Try again."}
   busy=false;fire();
@@ -186,8 +217,9 @@ function readFile(file){
   const r=new FileReader();
   r.onload=()=>{
     let obj=null;try{obj=JSON.parse(r.result)}catch(e){}
-    if(!obj||obj.app!=="money-tracker"||!obj.store||typeof obj.store!=="object"){pending=null;msg="That file isn't a Money Tracker backup.";fire();return}
-    pending={store:obj.store,exported:obj.exported||"",n:countTx(obj.store)};msg="";fire();
+    const b=BACKUP.read(obj);
+    if(b.err){pending=null;msg=b.err;fire();return}
+    pending={store:b.store,exported:b.exported,n:b.n};msg="";fire();
   };
   r.onerror=()=>{msg="Couldn't read that file.";fire()};
   r.readAsText(file);
@@ -3497,18 +3529,20 @@ async function saveMatch(){const i=$("#mbval");if(i)MB.val=i.value;const v=parse
 document.addEventListener("input",e=>{if(MB&&e.target.id==="mbval"){MB.val=e.target.value;const a=accounts().find(x=>x.name===MB.name);if(!a)return;const card=a.kind==="credit",v=parseAmt(MB.val),has=String(MB.val).trim()!==""&&!isNaN(v),d=has?r2((card?-Math.abs(v):v)-acctBalAt(a.name,today())):0,el=$("#mbdiff");if(el)el.innerHTML=mbDiffHtml(has,d,card)}});
 
 /* ---------- backup and restore ---------- */
-const BKAPP="money-tracker";
-function backupData(){const tx=S.tx.map(t=>Object.assign({},t)),props=S.props.map(p=>Object.assign({},p));return {app:BKAPP,v:1,at:new Date().toISOString(),day:today(),currency:CUR,config:JSON.parse(JSON.stringify(S.cfg)),tx,props}}
-async function doBackup(){if(!S.dl){toast("Saving files isn't available here");return}const b=backupData();
+/* the shared backup format is made and read at the top of the page (window.__backup), so every version agrees */
+function backupData(){const store={"app/config":JSON.parse(JSON.stringify(S.cfg))};
+  S.tx.forEach(({id,...t})=>{store["tx/"+id]=t});S.props.forEach(({id,...p})=>{store["props/"+id]=p});
+  return window.__backup.make(store,window.__platform||"claude")}
+async function doBackup(){if(!S.dl){toast("Saving files isn't available here");return}const b=backupData(),n=S.tx.length;
   try{await S.dl.save({filename:`money-tracker-backup-${today()}.json`,data:JSON.stringify(b)});
     if(!S.demo){const c=JSON.parse(JSON.stringify(S.cfg));c.lastBackup=today();if(S.draft)S.draft.lastBackup=c.lastBackup;try{await S.db.doc("app/config").set(c)}catch(e){}}
-    toast(`Backup ready: ${b.tx.length} transaction${b.tx.length===1?"":"s"}`)}catch(err){if(err&&err.code!=="declined")toast("Couldn't create the file. Try again.")}}
+    toast(`Backup ready: ${n} transaction${n===1?"":"s"}`)}catch(err){if(err&&err.code!=="declined")toast("Couldn't create the file. Try again.")}}
 let RS=null;
 const okId=id=>typeof id==="string"&&/^[A-Za-z0-9_\-.~:@+]{1,200}$/.test(id)&&id!=="."&&id!=="..";
-function readBackup(text){let d;try{d=JSON.parse(text)}catch(e){return {err:"That file isn't a Money Tracker backup."}}
-  if(!d||d.app!==BKAPP||!d.config||!Array.isArray(d.tx)||!Array.isArray(d.config.accounts)||!Array.isArray(d.config.categories))return {err:"That file isn't a Money Tracker backup."};
-  const bad=d.tx.filter(t=>!t||typeof t!=="object"||!/^\d{4}-\d{2}-\d{2}$/.test(String(t.date||""))||!TYPES.includes(t.type));if(bad.length)return {err:`The backup has ${bad.length} damaged transaction${bad.length===1?"":"s"}, so it wasn't used.`};
-  d.props=Array.isArray(d.props)?d.props:[];return {d}}
+/* any backup file, turned into the lists the restore sheet works with */
+function readBackup(text){let j=null;try{j=JSON.parse(text)}catch(e){}const b=window.__backup.read(j);if(b.err)return {err:b.err};
+  const list=c=>Object.keys(b.store).filter(k=>k.startsWith(c+"/")).map(k=>({id:k.slice(c.length+1),...b.store[k]}));
+  return {d:{at:b.exported,config:b.store["app/config"],tx:list("tx"),props:list("props")}}}
 async function openRestore(file){let text="";try{text=await file.text()}catch(e){}const r=readBackup(text);
   closeSheets();RS={file:file.name,d:r.d||null,err:r.err||"",armed:false,busy:false,prog:0,total:0};drawRestore()}
 function drawRestore(){const host=$("#sheetHost");if(!RS){clearSheet();return}const d=RS.d;let body="";
