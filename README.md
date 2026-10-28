@@ -35,7 +35,7 @@ The app currently runs inside claude.ai and depends on two Claude-only features.
 2. **File downloads — `window.claude.use("downloads")`**
    Used for exports such as CSV. On iOS, replace it with the native share sheet.
 
-Some data also uses `localStorage` (for example the PIN settings). Move anything sensitive to the iOS Keychain.
+In the iOS app, the PIN lock settings and failed-try counter are kept in the iOS Keychain (`ios/App/App/SecureStorePlugin.swift`); in a browser they stay in `localStorage`. Only small, non-sensitive preferences (theme, last screen, drafts) still use `localStorage` in the app.
 
 ## Feature switches for the free and paid tiers
 
