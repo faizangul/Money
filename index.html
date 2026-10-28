@@ -897,6 +897,7 @@ details.more[open] summary{margin-bottom:10px}
 .calc .dots,.callegend{display:flex;gap:3px;justify-content:center}.callegend{gap:12px;justify-content:flex-start;margin:0 0 6px}
 .calc .dots i,.callegend i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--warn);margin-right:4px}.calc .dots i{margin:0}
 .calc .dots i.in,.callegend i.in{background:var(--pos)}.calc .dots i.mv,.callegend i.mv{background:var(--c2)}.calc.sel .dots i{box-shadow:0 0 0 1px var(--accent-ink)}
+.tripbar{height:8px;border-radius:99px;background:var(--sunk);overflow:hidden;margin:6px 0 2px}.tripbar i{display:block;height:100%;background:var(--accent);border-radius:inherit}.tripbar i.over{background:var(--neg)}
 .cardtag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;background:color-mix(in srgb,var(--c3) 20%,transparent);color:var(--ink)}
 .tdot{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:700;font-size:15px;background:color-mix(in srgb,var(--g) 22%,transparent);color:color-mix(in srgb,var(--g) 72%,var(--ink))}
 .tdot svg{width:17px;height:17px}
@@ -1030,7 +1031,7 @@ const S={db:null,dl:null,cfg:null,cfgLoaded:false,tx:[],txLoaded:false,props:[],
 try{const v=localStorage.getItem("mt.view");if(v)S.view=v}catch(e){}
 if(/^#[a-z]+$/.test(location.hash))S.view=location.hash.slice(1);
 /* an account page needs to know which account; after a reload that's gone, so open Home instead */
-if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget","calendar"].includes(S.view))S.view="home";
+if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget","calendar","trips"].includes(S.view))S.view="home";
 
 /* ---------- derived data ---------- */
 const cats=()=>S.cfg?S.cfg.categories:[];
@@ -1668,9 +1669,9 @@ let raf=0;
 function render(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;draw()})}
 function draw(){syncRegion();
   document.querySelectorAll("nav.tabs [data-go]").forEach(b=>{
-    const v=b.dataset.go;const on=v===S.view||(v==="home"&&S.view==="acct")||(v==="more"&&["people","trading","loans","settings","plan","tax","calendar"].includes(S.view));
+    const v=b.dataset.go;const on=v===S.view||(v==="home"&&S.view==="acct")||(v==="more"&&["people","trading","loans","settings","plan","tax","calendar","trips"].includes(S.view));
     on?b.setAttribute("aria-current","page"):b.removeAttribute("aria-current")});
-  const titles={acct:S.acct||"Account",calendar:"Calendar",insights:"Insights",plan:"Money methods",home:"Money",activity:"Activity",budget:"Budget",more:"More",tax:"Tax time",people:feat("loans")?(feat("people")?"People and loans":"Loans"):"People",trading:"Prop trading",loans:"Loans",settings:S.sset?({accounts:"Accounts",budget:"Budget",bills:"Bills and pay",goals:"Goals",loans:"Loans",you:"Profile and look",reminders:"Reminders",track:"What to track",methods:"Money methods"}[S.sset]||"Settings"):"Settings"};
+  const titles={acct:S.acct||"Account",calendar:"Calendar",trips:"Trips",insights:"Insights",plan:"Money methods",home:"Money",activity:"Activity",budget:"Budget",more:"More",tax:"Tax time",people:feat("loans")?(feat("people")?"People and loans":"Loans"):"People",trading:"Prop trading",loans:"Loans",settings:S.sset?({accounts:"Accounts",budget:"Budget",bills:"Bills and pay",goals:"Goals",loans:"Loans",you:"Profile and look",reminders:"Reminders",track:"What to track",methods:"Money methods"}[S.sset]||"Settings"):"Settings"};
   $("#ttl").textContent=titles[S.view]||"Money Tracker";
   {const bb=$("#backbtn");if(bb){const pv=S.hist.length?S.hist[S.hist.length-1]:null;bb.hidden=!pv;if(pv)bb.setAttribute("aria-label","Back to "+((titles[pv.view]||"previous screen").replace(/^Money$/,"Home")))}}
   if(S.view==="budget"){S.view="insights";S.itab="budget"}
@@ -1682,7 +1683,7 @@ function draw(){syncRegion();
   if(S.state==="error"){app.innerHTML=`<div class="card empty"><h2>Can't reach your data right now</h2><p class="muted">Nothing is lost. Check your connection, then try again.</p><p><button class="btn primary" data-act="retryload">Try again</button></p></div>`;return}
   if(S.state==="nodb"){app.innerHTML=`<div class="card empty"><h2>Couldn't open your data</h2><p class="muted">Money Tracker couldn't read its storage on this device. Close the app fully and open it again. Your data hasn't been deleted.</p></div>`;return}
   if(!S.cfg){app.innerHTML=vWelcome();return}
-  const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct,calendar:vCal}[S.view]||vHome;
+  const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct,calendar:vCal,trips:vTrips}[S.view]||vHome;
   const vkey=[S.view,S.view==="insights"?S.itab:"",S.acct||"",S.sset||""].join("|"),mkey=vkey+"|"+S.month,prevTab=S._vkey&&S._vkey.split("|")[0]===S.view&&S.view==="insights"?S._vkey.split("|")[1]:null;
   const pillFrom=(()=>{const t=document.querySelector("#app .subtabs .pill");return t?{x:t.style.transform,w:t.style.width,k:t.dataset.k}:null})();
   app.innerHTML=(S.demo?`<div class="demobar" role="status"><p><b>Sample data.</b> Explore freely, nothing here is saved.</p><button class="btn sm" data-act="demoexit">Exit</button></div>`:"")+v();
@@ -1767,6 +1768,7 @@ function vHome(){
     <div class="stats num" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><b>${money0(st.inc)}</b><small>Money in</small></div><div class="stat"><b>${money0(st.out)}</b><small>Money out</small></div>
       ${feat("trading")?`<div class="stat"><b>${money0(st.exTrading)}</b><small>Without trading</small></div>`:`<div class="stat"><b>${st.rate===null?"–":Math.round(st.rate*100)+"%"}</b><small>Kept</small></div>`}</div></section>`;
 
+  h+=tripCard();
   mark("upcoming");
   const up=upcoming().filter(u=>cur?true:ym(u.d)===m);
   if(up.length){
@@ -1913,6 +1915,60 @@ function vCal(){
     h+=`<section class="card"><div class="head"><h2>${esc(dayLabel(sel))}</h2></div>${!D.tx.length&&!D.due.length?`<p class="muted" style="margin:0">Nothing on this day.</p>`:""}
       ${D.due.length?`<div class="rows">${D.due.map(dueRow).join("")}</div>`:""}${D.tx.length?`<div class="rows">${D.tx.map(txRow).join("")}</div>`:""}</section>`}
   return h}
+/* ---------- trips: a name, dates and a budget; expenses in those dates can be tagged to it ---------- */
+const trips=()=>((S.cfg&&S.cfg.trips)||[]).slice().sort((a,b)=>b.start.localeCompare(a.start));
+const tripFor=d=>trips().find(t=>d>=t.start&&d<=t.end)||null;
+const activeTrip=()=>tripFor(today());
+const daysIncl=(a,b)=>Math.round((Date.parse(b+"T00:00:00Z")-Date.parse(a+"T00:00:00Z"))/864e5)+1;
+/* the trip a new or edited expense goes to: on by default for a new one dated in a trip, off once unticked */
+function txTrip(f){if(f.type!=="Expense"||f.trip===false)return null;const tr=tripFor(f.date);if(!tr)return null;
+  return f.trip===tr.id||(f.trip===undefined&&!f.id)?tr.id:null}
+function tripStats(tr){return memo("trip",tr.id+"|"+tr.start+"|"+tr.end+"|"+tr.budget,()=>{
+  const t=today(),tx=S.tx.filter(x=>x.trip===tr.id&&x.type==="Expense").sort((a,b)=>b.date.localeCompare(a.date)||(b.created||0)-(a.created||0));
+  const spent=r2(tx.reduce((s,x)=>s+(+x.amount||0),0)),byCat={};tx.forEach(x=>{byCat[x.category]=r2((byCat[x.category]||0)+(+x.amount||0))});
+  const days=daysIncl(tr.start,tr.end),state=t<tr.start?"soon":t>tr.end?"done":"on";
+  /* gone counts today; left also counts today, since it can still be spent */
+  const gone=state==="soon"?0:state==="done"?days:daysIncl(tr.start,t),left=state==="soon"?days:state==="done"?0:days-gone+1;
+  const budget=+tr.budget||0,remain=budget?r2(budget-spent):null;
+  return{tx,spent,byCat,days,gone,left,state,budget,remain,perDay:gone?r2(spent/gone):0,perDayLeft:budget&&left>0?r2(Math.max(0,remain)/left):null}})}
+function tripBar(st){if(!st.budget)return"";const pc=Math.min(100,Math.round(st.spent/st.budget*100));
+  return `<div class="tripbar" role="img" aria-label="${pc}% of the budget spent"><i style="width:${pc}%"${st.spent>st.budget?' class="over"':""}></i></div>`}
+function tripCard(){const tr=activeTrip();if(!tr)return"";const st=tripStats(tr);
+  return `<section class="card"><div class="head"><h2>${esc(tr.name)}</h2><span class="small muted">Day ${st.gone} of ${st.days}</span></div>
+    <div class="kv"><span>Spent on this trip</span><b class="num">${money(st.spent)}${st.budget?` of ${money0(st.budget)}`:""}</b></div>${tripBar(st)}
+    <p class="small muted" style="margin:8px 0 0">${st.budget?(st.remain<0?`<b>${money(-st.remain)} over budget.</b>`:`About <b>${money0(st.perDayLeft)} a day</b> left for the next ${st.left} day${st.left===1?"":"s"}, today included.`):"New expenses are added to this trip."}</p>
+    <button class="linkbtn" data-go="trips" style="margin-top:8px">See the trip</button></section>`}
+let TR=null;/* the new-trip form: {name,start,end,budget,err} */
+function vTrips(){
+  const list=trips();
+  let h=`<section class="card"><div class="head"><h2>${TR?"New trip":"Plan a trip"}</h2></div>`;
+  if(TR){h+=`<form id="tripform"><div class="field"><label for="trn">Name</label><input class="inp" id="trn" value="${esc(TR.name)}" placeholder="e.g. Japan trip" autocomplete="off"></div>
+      <div class="two"><div class="field"><label for="trs">Starts</label><input class="inp" type="date" id="trs" value="${esc(TR.start)}"></div><div class="field"><label for="tre">Ends</label><input class="inp" type="date" id="tre" value="${esc(TR.end)}"></div></div>
+      <div class="field"><label for="trb">Budget (optional)</label><input class="inp num" id="trb" inputmode="decimal" value="${esc(TR.budget)}" placeholder="e.g. 4000"></div>
+      ${TR.err?`<p class="err" role="alert">${esc(TR.err)}</p>`:""}
+      <div class="btnrow"><button type="submit" class="btn primary">Start trip</button><button type="button" class="btn" data-act="tripcancel">Cancel</button></div></form>`}
+  else h+=`<p class="small muted" style="margin:0 0 10px">Give a trip its dates and a budget. While it's on, new expenses are added to it, so you can see what it really cost.</p><button class="btn primary" data-act="tripnew">Start a trip</button>`;
+  h+=`</section>`;
+  for(const tr of list){const st=tripStats(tr),cats=Object.entries(st.byCat).sort((a,b)=>b[1]-a[1]);
+    h+=`<section class="card"><div class="head"><h2>${esc(tr.name)}</h2><span class="small muted">${esc(shortDate(tr.start))} – ${esc(shortDate(tr.end))} ${tr.end.slice(0,4)}${st.state==="on"?" · on now":st.state==="soon"?" · coming up":""}</span></div>
+      <div class="kv"><span>Spent</span><b class="num">${money(st.spent)}${st.budget?` of ${money0(st.budget)}`:""}</b></div>${tripBar(st)}
+      ${st.budget&&st.state!=="soon"?`<div class="kv"><span>${st.remain<0?"Over budget":"Left"}</span><b class="num${st.remain<0?" neg":""}">${money(Math.abs(st.remain))}</b></div>`:""}
+      ${st.gone?`<div class="kv"><span>Per day</span><b class="num">${money(st.perDay)}</b></div>`:""}
+      ${cats.length?`<details class="more"><summary>By category ›</summary>${cats.map(([c,v])=>`<div class="kv"><span>${esc(c)}</span><b class="num">${money(v)}</b></div>`).join("")}</details>`:""}
+      ${st.tx.length?`<details class="more"><summary>${st.tx.length} expense${st.tx.length===1?"":"s"} ›</summary><div class="rows">${st.tx.map(txRow).join("")}</div></details>`:`<p class="small muted" style="margin:8px 0 0">No expenses on this trip yet.</p>`}
+      <div class="btnrow" style="margin-top:10px">${st.state==="on"?`<button class="btn sm" data-act="tripend" data-id="${esc(tr.id)}">End it today</button>`:""}<button class="btn sm danger${S.tripDel===tr.id?" armed":""}" data-act="tripdel" data-id="${esc(tr.id)}">${S.tripDel===tr.id?"Tap again to delete":"Delete trip"}</button></div></section>`}
+  return h}
+/* trips live in the saved settings, so they go into backups with everything else */
+async function saveTrips(fn){const c=JSON.parse(JSON.stringify(S.cfg));c.trips=fn((c.trips||[]).slice());
+  await S.db.doc("app/config").set(c);if(S.draft)S.draft.trips=JSON.parse(JSON.stringify(c.trips))}
+/* the error for a new trip, or "" if it can be saved */
+function tripErr(name,start,end,b,list){const iso=/^\d{4}-\d{2}-\d{2}$/;
+  return !name?"Give the trip a name.":!iso.test(start)||!iso.test(end)?"Pick both dates.":end<start?"The trip has to end on or after the day it starts."
+    :isNaN(b)||b<0?"Enter the budget as an amount, or leave it empty.":list.some(x=>start<=x.end&&end>=x.start)?"Those dates overlap another trip. Change the dates, or end the other trip first.":""}
+async function tripSave(){const g=id=>{const e=$(id);return e?e.value:""};TR.name=g("#trn");TR.start=g("#trs");TR.end=g("#tre");TR.budget=g("#trb");
+  const name=TR.name.trim(),b=String(TR.budget).trim()===""?0:parseAmt(TR.budget);
+  TR.err=tripErr(name,TR.start,TR.end,b,trips());if(TR.err){render();return}
+  try{await saveTrips(l=>[...l,{id:"trip"+Date.now().toString(36),name,start:TR.start,end:TR.end,budget:r2(b)}]);TR=null;toast(`${name} added`);render()}catch(e){TR.err=dbMsg(e);render()}}
 function vActivity(){return imCard()+vActivity0()}
 function vActivity0(){
   const q=S.actQ.trim().toLowerCase();
@@ -2370,6 +2426,7 @@ function vMore(){
     ${feat("people")||feat("loans")?item("people",feat("people")&&feat("loans")?"People and loans":feat("loans")?"Loans":"People",[feat("people")?(ppl.length?(net>0?`Owed to you ${money(net)}`:net<0?`You owe ${money(-net)}`:"IOUs all square"):"IOUs with friends and family"):"",feat("loans")?(loans.length?`${money0(loans.reduce((s,l)=>s+l.owing,0))} owing on loans`:"Loans you're paying down"):""].filter(Boolean).join(" · ")):""}
     ${feat("trading")?item("trading","Prop trading",tt.n?`${tt.n} accounts · net ${money0(tt.net)}`:"Accounts you buy and their payouts"):""}
     ${item("calendar","Calendar","What came in and went out each day, and what's coming up")}
+    ${item("trips","Trips",(()=>{const tr=activeTrip();return tr?`${esc(tr.name)} is on now`:"A budget for a trip, and what it really cost"})())}
     <button class="row" data-act="import"><div class="main"><div class="t">Import a bank statement</div><div class="s">Add what you missed and fix what's off</div></div><span class="chev">›</span></button>
     ${item("tax","Tax time","Income, interest, super and possible deductions for the year")}
     ${item("plan","Money methods","50/30/20, Barefoot-style buckets, your FIRE number")}
@@ -3484,7 +3541,8 @@ function drawSheet(){
          <p class="small muted" id="ffxr" style="margin:6px 0 0">${r?`Rate: 1 ${esc(CUR)} = ${r.toFixed(r<10?3:1)} ${esc(cur)}`:"Add it to track your exchange rate and fees over time."}</p></div>`})():""}
      ${catOf(F.category)?.role==="loan"?`<div class="field"><label for="fperson">Lender</label><input class="inp" id="fperson" list="ppl" autocomplete="off" value="${esc(F.person)}"><datalist id="ppl">${persons.map(p=>`<option value="${esc(p)}">`).join("")}</datalist></div>`:""}
      <div class="field"><label for="fdate">Date</label><div style="display:flex;gap:8px;flex-wrap:wrap"><input class="inp" type="date" id="fdate" value="${F.date}" style="flex:1;min-width:150px">
-       <button type="button" class="chip ghost" data-act="dtoday">Today</button><button type="button" class="chip ghost" data-act="dyest">Yesterday</button></div></div>`;
+       <button type="button" class="chip ghost" data-act="dtoday">Today</button><button type="button" class="chip ghost" data-act="dyest">Yesterday</button></div></div>
+     ${F.type==="Expense"&&tripFor(F.date)?`<label class="check" for="ftrip"><input type="checkbox" id="ftrip" ${txTrip(F)?"checked":""}> Part of ${esc(tripFor(F.date).name)}</label>`:""}`;
   }
   const back=st>1?`<button type="button" class="btn" data-act="fback">Back</button>`:"";
   let foot;
@@ -3555,6 +3613,7 @@ async function saveTx(again){
   const data={date:F.date,account:F.account,type:t,category:t==="Transfer"?"Transfer":t.startsWith("IOU")?"Lending & IOUs":F.category,
     desc:F.desc.trim(),amount:F.neg&&(t==="Expense"||t==="Income")?-amt:amt,to:t==="Transfer"?F.to:"",person:(F.person||"").trim(),created:F.created||Date.now()};
   if(F.rec)data.rec=F.rec;
+  const trip=txTrip(F);if(trip)data.trip=trip;
   let linked=null;if(!F.id&&!F.rec&&!F.loan&&!F.noLink){linked=billMatch(data);if(linked)data.rec=linked.key}
   if(F.loan&&t==="Expense")data.loan=F.loan;
   if(t==="Expense"&&catOf(F.category)?.role==="remit"){const fa=parseAmt(F.fxAmt??(F.fx&&F.fx.amt));if(fa>0)data.fx={cur:(F.fx&&F.fx.cur)||homeCur()||"",amt:r2(fa)}}
@@ -4164,6 +4223,11 @@ document.addEventListener("click",async e=>{
     case "actm":S.actMonth=a.dataset.m;S.actLim=0;render();break;
     case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
     case "calday":S.calDay=a.dataset.d;render();break;
+    case "tripnew":{const t=today();TR={name:"",start:t,end:addDays(t,6),budget:"",err:""};render();break}
+    case "tripcancel":TR=null;render();break;
+    case "tripend":{const id=a.dataset.id,t=today();try{await saveTrips(l=>l.map(x=>x.id===id?Object.assign({},x,{end:t<x.start?x.start:t}):x));toast("Trip ended")}catch(err){toast(dbMsg(err))}render();break}
+    case "tripdel":{const id=a.dataset.id;if(S.tripDel!==id){S.tripDel=id;render();break}S.tripDel="";
+      try{await saveTrips(l=>l.filter(x=>x.id!==id));toast("Trip deleted. Its expenses are still in Activity.")}catch(err){toast(dbMsg(err))}render();break}
     case "actt":S.actType=a.dataset.t;S.actLim=0;render();break;
     case "actmore":S.actLim=(S.actLim||200)+200;render();break;
     case "person":S.actQ=a.dataset.p;S.actType="All";S.actMonth="all";go("activity");break;
@@ -4358,11 +4422,13 @@ document.addEventListener("input",e=>{if(F&&e.target&&(e.target.id==="ffx"||e.ta
 document.addEventListener("input",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("change",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("input",e=>{if(V&&e.target.closest&&e.target.closest("#valform")){readVal();const t=$("#vtot");if(t)t.textContent=money(valTotal())}});
-document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else saveTx(false)}if(e.target.id==="propform")saveProp();if(e.target.id==="pauseform")savePause();if(e.target.id==="valform")saveVal();if(e.target.id==="goalform")saveGoal(false);if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
+document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else saveTx(false)}if(e.target.id==="propform")saveProp();if(e.target.id==="tripform")tripSave();if(e.target.id==="pauseform")savePause();if(e.target.id==="valform")saveVal();if(e.target.id==="goalform")saveGoal(false);if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
 document.addEventListener("change",e=>{
   const el=e.target;
   if(el.id==="fdesc"&&F){readForm();const before=JSON.stringify([F.type,F.category,F.account,F.to]);autofill(el.value);if(JSON.stringify([F.type,F.category,F.account,F.to])!==before)drawSheet()}
   if(el.id==="plog"&&P){readProp();drawProp()}
+  if(el.id==="ftrip"&&F){readForm();const tr=tripFor(F.date);F.trip=el.checked&&tr?tr.id:false}
+  if(el.id==="fdate"&&F){readForm();drawSheet()}
   if(el.dataset&&el.dataset.y&&Y){const [i,f]=el.dataset.y.split(".");const it=Y.items[+i];if(it){if(f==="on")it.on=el.checked;else if(f==="monthly"){const v=parseAmt(el.value);it.monthly=isNaN(v)?0:v}else it[f]=el.value;if(f==="on"||f==="kind")drawStory()}}
   if(el.dataset&&el.dataset.s&&S.draft){S.draftDirty=true;queueMicrotask(()=>markDraft());
     let v=el.type==="checkbox"?el.checked:el.type==="number"?(el.value===""?0:+el.value):el.value;if(el.dataset.sneg&&typeof v==="number")v=-v;setPath(S.draft,el.dataset.s,v);
