@@ -23,8 +23,10 @@ function fakeLocalStorage(init = {}) {
 // Same contract as ios/App/App/MoneyStorePlugin.swift.
 function fakeSqlite() {
   const docs = new Map(), kv = new Map();
-  const disk = { docs, kv, failNext: false, calls: [] };
+  const keychain = new Map();
+  const disk = { docs, kv, keychain, failNext: false, failKeychain: false, calls: [] };
   disk.call = async (plugin, method, o) => {
+    if (plugin === "SecureStore") return fakeKeychain(disk, method, o);
     assert.equal(plugin, "MoneyStore");
     disk.calls.push(method);
     if (disk.failNext && method !== "load") { disk.failNext = false; throw { code: "write_failed" }; }
@@ -35,6 +37,15 @@ function fakeSqlite() {
     throw new Error("unknown method " + method);
   };
   return disk;
+}
+
+// Same contract as ios/App/App/SecureStorePlugin.swift.
+async function fakeKeychain(disk, method, o) {
+  if (disk.failKeychain && method !== "get") throw { code: "unavailable" };
+  if (method === "get") return { value: disk.keychain.has(o.key) ? disk.keychain.get(o.key) : null };
+  if (method === "set") { disk.keychain.set(o.key, o.value); return; }
+  if (method === "remove") { disk.keychain.delete(o.key); return; }
+  throw new Error("unknown method " + method);
 }
 
 function launch({ disk = null, localStorage = fakeLocalStorage() } = {}) {
@@ -174,4 +185,89 @@ test("browser: still uses localStorage and survives a reload", async () => {
   assert.deepEqual(JSON.parse(ls.getItem("mt.store.v1")), { "tx/t": { amt: 3.3 } });
   db = await launch({ localStorage: ls }).use("db");
   assert.deepEqual((await db.doc("tx/t").get()).data(), { amt: 3.3 });
+});
+
+const PIN = JSON.stringify({ h: "abc123", salt: "s1", after: 60 });
+
+test("iOS: the PIN is kept in the Keychain and survives a restart", async () => {
+  const disk = fakeSqlite();
+  const ls = fakeLocalStorage();
+  let app = launch({ disk, localStorage: ls });
+  await app.window.__mt.ready;
+  assert.equal(app.window.__mt.secret.get("mt.pin"), null);
+  await app.window.__mt.secret.set("mt.pin", PIN);
+  assert.equal(disk.keychain.get("mt.pin"), PIN);
+  assert.equal(ls.getItem("mt.pin"), null);
+
+  app = launch({ disk, localStorage: ls });
+  await app.window.__mt.ready;
+  assert.equal(app.window.__mt.secret.get("mt.pin"), PIN);
+  await app.window.__mt.secret.set("mt.pin", null);
+  assert.equal(disk.keychain.has("mt.pin"), false);
+});
+
+test("iOS: a PIN from an earlier localStorage build moves into the Keychain", async () => {
+  const disk = fakeSqlite();
+  const tries = JSON.stringify({ tries: 2, until: 0, level: 0 });
+  const ls = fakeLocalStorage({ "mt.pin": PIN, "mt.pintries": tries, "mt.look": "{}" });
+  const app = launch({ disk, localStorage: ls });
+  await app.window.__mt.ready;
+  assert.equal(app.window.__mt.secret.get("mt.pin"), PIN);
+  assert.equal(disk.keychain.get("mt.pin"), PIN);
+  assert.equal(disk.keychain.get("mt.pintries"), tries);
+  assert.equal(ls.getItem("mt.pin"), null);
+  assert.equal(ls.getItem("mt.pintries"), null);
+  assert.equal(ls.getItem("mt.look"), "{}");
+});
+
+test("iOS: the Keychain PIN wins over a stale localStorage copy", async () => {
+  const disk = fakeSqlite();
+  disk.keychain.set("mt.pin", PIN);
+  const ls = fakeLocalStorage({ "mt.pin": JSON.stringify({ h: "old", salt: "x", after: 0 }) });
+  const app = launch({ disk, localStorage: ls });
+  await app.window.__mt.ready;
+  assert.equal(app.window.__mt.secret.get("mt.pin"), PIN);
+  assert.equal(ls.getItem("mt.pin"), null);
+});
+
+test("iOS: if the Keychain can't save, the PIN isn't changed", async () => {
+  const disk = fakeSqlite();
+  disk.keychain.set("mt.pin", PIN);
+  const app = launch({ disk });
+  await app.window.__mt.ready;
+  disk.failKeychain = true;
+  await assert.rejects(app.window.__mt.secret.set("mt.pin", null));
+  assert.equal(app.window.__mt.secret.get("mt.pin"), PIN);
+  assert.equal(disk.keychain.get("mt.pin"), PIN);
+});
+
+test("iOS: the database isn't handed out before the PIN settings are loaded", async () => {
+  const disk = fakeSqlite();
+  disk.keychain.set("mt.pin", PIN);
+  const app = launch({ disk });
+  let pinLoaded = false;
+  app.window.__mt.ready.then(() => { pinLoaded = app.window.__mt.secret.get("mt.pin") === PIN; });
+  await app.use("db");
+  assert.equal(pinLoaded, true);
+});
+
+test("iOS: erasing all data keeps the PIN (only Forgot PIN removes it)", async () => {
+  const disk = fakeSqlite();
+  disk.keychain.set("mt.pin", PIN);
+  const app = launch({ disk });
+  await app.use("db");
+  await app.window.__mt.eraseAll();
+  assert.equal(disk.keychain.get("mt.pin"), PIN);
+});
+
+test("browser: the PIN stays in localStorage", async () => {
+  const ls = fakeLocalStorage({ "mt.pin": PIN });
+  let app = launch({ localStorage: ls });
+  await app.window.__mt.ready;
+  assert.equal(app.window.__mt.secret.get("mt.pin"), PIN);
+  await app.window.__mt.secret.set("mt.pintries", "{}");
+  assert.equal(ls.getItem("mt.pintries"), "{}");
+  app = launch({ localStorage: ls });
+  await app.window.__mt.ready;
+  assert.equal(app.window.__mt.secret.get("mt.pintries"), "{}");
 });

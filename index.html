@@ -45,6 +45,32 @@ async function loadNative(){
     return true;
   }catch(e){console.error("MoneyStore load failed",e);storageOk=false;return false}
 }
+/* small secrets (PIN lock): iOS Keychain in the app, localStorage in a browser. Loaded once at start
+   so reads stay instant; an older build's localStorage copy moves into the Keychain once. */
+const SECRET_KEYS=["mt.pin","mt.pintries"],secrets={};
+const kc=(m,o)=>CAP.nativePromise("SecureStore",m,o);
+async function loadSecrets(){
+  for(const k of SECRET_KEYS){
+    let old=null;try{old=localStorage.getItem(k)}catch(e){}
+    if(!NATIVE){if(old!=null)secrets[k]=old;continue}
+    let v=null;
+    try{v=(await kc("get",{key:k})).value;if(v==null&&old!=null){await kc("set",{key:k,value:old});v=old}
+      if(old!=null)localStorage.removeItem(k)}
+    catch(e){console.error("SecureStore load failed",k,e);if(v==null)v=old}
+    if(v!=null)secrets[k]=v;
+  }
+}
+const secretsReady=loadSecrets();
+const secret={
+  get:k=>secrets[k]??null,
+  /* resolves once saved; a null value removes it. On failure the old value comes back and it rejects. */
+  set(k,v){
+    const prev=secrets[k];if(v==null)delete secrets[k];else secrets[k]=v;
+    const undo=e=>{if(prev==null)delete secrets[k];else secrets[k]=prev;throw e};
+    if(!NATIVE){try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){return Promise.reject(e).catch(undo)}return Promise.resolve()}
+    return chain(()=>v==null?kc("remove",{key:k}):kc("set",{key:k,value:v})).catch(undo);
+  }
+};
 let ready;
 if(NATIVE)ready=loadNative();
 else{
@@ -197,8 +223,9 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("change",e=>{if(e.target.id==="mtfile"&&e.target.files&&e.target.files[0]){readFile(e.target.files[0]);e.target.value=""}});
 
-window.__mt={card,nudge,firstRun,eraseAll};
-window.claude={use:async n=>n==="db"?(await ready?db:null):n==="downloads"?downloads:null};
+window.__mt={card,nudge,firstRun,eraseAll,secret,ready:secretsReady};
+/* the database waits for the PIN settings, so the lock screen is up before any data shows */
+window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n==="downloads"?downloads:null};
 if("serviceWorker" in navigator&&location.protocol==="https:"){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))}
 })();
 </script>
@@ -1783,14 +1810,18 @@ function vTax(){const y=fyStart(),F=fyRange(y),inR=t=>t.date>=F.from&&t.date<=F.
   return h}
 
 /* ---------- PIN lock (kept on this device only) ---------- */
-const PINK="mt.pin";
-function pinCfg(){try{return JSON.parse(localStorage.getItem(PINK)||"null")}catch(e){return null}}
+const PINK="mt.pin",SECRET=window.__mt&&window.__mt.secret;
+/* PIN settings live in the iOS Keychain in the app (see the store at the top), localStorage otherwise */
+const secGet=k=>{if(SECRET)return SECRET.get(k);try{return localStorage.getItem(k)}catch(e){return null}};
+const secSet=(k,v)=>{if(SECRET)return SECRET.set(k,v);try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){return Promise.reject(e)}return Promise.resolve()};
+function pinCfg(){try{return JSON.parse(secGet(PINK)||"null")}catch(e){return null}}
+const pinSave=c=>secSet(PINK,c?JSON.stringify(c):null);
 async function pinHash(pin,salt){const d=new TextEncoder().encode(salt+":"+pin);try{const h=await crypto.subtle.digest("SHA-256",d);return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,"0")).join("")}catch(e){let x=5381;for(const c of d)x=((x<<5)+x+c)>>>0;return "f"+x.toString(16)}}
 let PL=null;
 /* failed tries are remembered on the device, so reloading the page doesn't reset the wait; each lockout doubles, up to an hour */
 const PINT="mt.pintries";
-function pinTries(){try{return Object.assign({tries:0,until:0,level:0},JSON.parse(localStorage.getItem(PINT)||"null")||{})}catch(e){return {tries:0,until:0,level:0}}}
-function pinTriesSet(o){try{o?localStorage.setItem(PINT,JSON.stringify(o)):localStorage.removeItem(PINT)}catch(e){}}
+function pinTries(){try{return Object.assign({tries:0,until:0,level:0},JSON.parse(secGet(PINT)||"null")||{})}catch(e){return {tries:0,until:0,level:0}}}
+function pinTriesSet(o){secSet(PINT,o?JSON.stringify(o):null).catch(e=>console.error(e))}
 function pinShow(mode){const pt=pinTries();PL={mode,entry:"",first:"",err:"",tries:pt.tries,until:pt.until,forgot:false,armed:false};let o=$("#pinlock");if(!o){o=document.createElement("div");o.id="pinlock";o.setAttribute("role","dialog");o.setAttribute("aria-modal","true");document.body.appendChild(o)}
   document.body.classList.add("pinon");pinDraw()}
 function pinHide(){PL=null;const o=$("#pinlock");if(o){o.classList.add("out");setTimeout(()=>o.remove(),220)}document.body.classList.remove("pinon")}
@@ -1815,30 +1846,30 @@ async function pinKey(k){if(!PL)return;if(PL.until>Date.now())return;
   const e=PL.entry,c=pinCfg();await new Promise(r=>setTimeout(r,120));
   if(PL.mode==="set"){if(!PL.first){PL.first=e;PL.entry="";return pinDraw()}
     if(PL.first!==e){PL.first="";PL.entry="";PL.err="Those didn't match. Choose a PIN again.";return pinDraw()}
-    const salt=Math.random().toString(36).slice(2,10),after=(c&&c.after)||0;try{localStorage.setItem(PINK,JSON.stringify({h:await pinHash(e,salt),salt,after}))}catch(x){}pinHide();toast("PIN lock is on");render();return}
+    const salt=Math.random().toString(36).slice(2,10),after=(c&&c.after)||0;try{await pinSave({h:await pinHash(e,salt),salt,after})}catch(x){PL.first="";PL.entry="";PL.err="Couldn't save your PIN. Try again.";return pinDraw()}pinHide();toast("PIN lock is on");render();return}
   const ok=c&&(await pinHash(e,c.salt))===c.h;
   if(!ok){const pt=pinTries();pt.tries++;PL.entry="";PL.err="Wrong PIN. Try again.";if(pt.tries>=5){pt.level++;pt.until=Date.now()+Math.min(3600,30*Math.pow(2,pt.level-1))*1000;pt.tries=0}pinTriesSet(pt);PL.tries=pt.tries;PL.until=pt.until;return pinDraw()}
   pinTriesSet(null);
   if(PL.mode==="unlock"){pinHide();return}
-  if(PL.mode==="off"){try{localStorage.removeItem(PINK)}catch(x){}pinHide();toast("PIN lock is off");render();return}
+  if(PL.mode==="off"){try{await pinSave(null)}catch(x){PL.entry="";PL.err="Couldn't turn it off. Try again.";return pinDraw()}pinHide();toast("PIN lock is off");render();return}
   if(PL.mode==="change"){PL.mode="set";PL.entry="";PL.first="";return pinDraw()}}
 document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.closest("[data-pin]");if(!b||!PL)return;const k=b.dataset.pin;
   if(/^\d$/.test(k))return pinKey(k);if(k==="del")return pinKey("del");
   if(k==="cancel"){pinHide();return}if(k==="forgot"){PL.forgot=true;PL.armed=false;return pinDraw()}if(k==="back"){PL.forgot=false;return pinDraw()}
-  if(k==="remove"){try{localStorage.removeItem(PINK)}catch(x){}pinHide();toast("PIN removed");render();return}
-  if(k==="erase"){if(!PL.armed){PL.armed=true;return pinDraw()}if(window.__mt&&!await window.__mt.eraseAll()){toast("Couldn't erase. Try again.");return}try{Object.keys(localStorage).filter(x=>/^mt\./.test(x)).forEach(x=>localStorage.removeItem(x))}catch(x){}location.reload()}});
+  if(k==="remove"){try{await pinSave(null)}catch(x){toast("Couldn't remove the PIN. Try again.");return}pinHide();toast("PIN removed");render();return}
+  if(k==="erase"){if(!PL.armed){PL.armed=true;return pinDraw()}if(window.__mt&&!await window.__mt.eraseAll()){toast("Couldn't erase. Try again.");return}try{await pinSave(null);await secSet(PINT,null)}catch(x){toast("Couldn't erase. Try again.");return}try{Object.keys(localStorage).filter(x=>/^mt\./.test(x)).forEach(x=>localStorage.removeItem(x))}catch(x){}location.reload()}});
 document.addEventListener("keydown",e=>{if(!PL||PL.forgot)return;if(/^\d$/.test(e.key)){e.preventDefault();pinKey(e.key)}else if(e.key==="Backspace"){e.preventDefault();pinKey("del")}else if(e.key==="Escape"&&PL.mode!=="unlock"){pinHide()}},true);
 let pinAway=0;
 document.addEventListener("visibilitychange",()=>{const c=pinCfg();if(!c)return;if(document.hidden){pinAway=Date.now();if(!(c.after>0)&&!PL)pinShow("unlock")}
   else if(!PL&&pinAway&&Date.now()-pinAway>=(c.after||0)*1000)pinShow("unlock")});
-if(pinCfg())pinShow("unlock");
+(window.__mt?window.__mt.ready:Promise.resolve()).then(()=>{if(pinCfg())pinShow("unlock")});
 function pinSetHtml(){const c=pinCfg();
   return `<section class="card"><div class="head"><h2>PIN lock</h2><span class="small ${c?"":"muted"}">${c?"On":"Off"}</span></div>
     <p class="small muted" style="margin:-4px 0 10px">Ask for a 4-digit PIN when the app opens. It's saved on this ${window.__mt?"phone":"device"} only.</p>
     ${c?`<div class="field"><label for="pinafter">Ask for it</label><select class="inp" id="pinafter"><option value="0"${!(c.after>0)?" selected":""}>Every time I open the app</option><option value="60"${c.after===60?" selected":""}>After 1 minute away</option><option value="300"${c.after===300?" selected":""}>After 5 minutes away</option></select></div>
       <div class="btnrow" style="margin-top:10px"><button class="btn" data-act="pinchange">Change PIN</button><button class="btn" data-act="pinoff">Turn off</button></div>`
      :`<button class="btn primary" data-act="pinon">Turn on PIN lock</button>`}</section>`}
-document.addEventListener("change",e=>{if(e.target&&e.target.id==="pinafter"){const c=pinCfg();if(c){c.after=+e.target.value;try{localStorage.setItem(PINK,JSON.stringify(c))}catch(x){}toast("Saved")}}});
+document.addEventListener("change",e=>{if(e.target&&e.target.id==="pinafter"){const c=pinCfg();if(c){c.after=+e.target.value;pinSave(c).then(()=>toast("Saved"),()=>toast("Couldn't save. Try again."))}}});
 /* ---------- import a bank statement (CSV or PDF) ---------- */
 let IM=null;
 const IMKEYS={
