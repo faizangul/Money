@@ -6,11 +6,19 @@ This repository holds the working web version, exported from Claude. The next jo
 
 ## What's here
 
+The web app lives at the repository root so GitHub Pages keeps serving it from `main`. The iOS app wraps the same files with Capacitor.
+
 | Path | What it is |
 | --- | --- |
-| `web/index.html` | The whole app: markup, styles and script in one file (fonts are embedded) |
-| `web/pdf.min.js` | Mozilla pdf.js 3.11.174, loaded only when a PDF statement is imported |
-| `web/pdf.worker.min.js` | pdf.js worker, loaded with the file above |
+| `index.html` | The whole app: markup, styles and script in one file (fonts are embedded). The first `<script>` is the on-device store: SQLite in the iOS app, localStorage in a browser |
+| `pdf.min.js`, `pdf.worker.min.js` | Mozilla pdf.js 3.11.174, loaded only when a PDF statement is imported |
+| `manifest.webmanifest`, `icon-*.png`, `sw.js` | Home Screen install files for the web version (`sw.js` isn't used in the iOS app) |
+| `capacitor.config.json` | Capacitor settings, app ID `com.faizangul.moneytracker` |
+| `scripts/build-web.mjs` | Copies the web files into `www/` (generated, not committed) for Capacitor |
+| `ios/` | The Xcode project. `ios/App/App/MoneyStorePlugin.swift` is the native SQLite store |
+| `tests/` | Automated tests, run with `npm test` |
+
+Common commands: `npm run sync` (copy the web app into the iOS project), `npm run open:ios` (open Xcode), `npm test`.
 
 ## What has to change for iOS
 
@@ -35,7 +43,7 @@ The code already has switches, checked with `feat("...")`, for: `goals`, `invest
 
 ## Suggested first steps (iOS Engineer)
 
-1. Add Capacitor and an iOS project around `web/`.
+1. Add Capacitor and an iOS project around the web app (done).
 2. Replace the storage wrapper and test that data survives an app restart.
 3. Add Face ID, local bill reminders and statement import from the Files app.
 4. Add StoreKit 2 subscriptions and the paywall.
