@@ -1,0 +1,12 @@
+# GitHub Pages (Jekyll) settings. The site is only the web app at the repo root;
+# the iOS project, tooling and notes for Claude stay in the repo but aren't published.
+exclude:
+  - ios/
+  - www/
+  - node_modules/
+  - scripts/
+  - tests/
+  - CLAUDE.md
+  - package.json
+  - package-lock.json
+  - capacitor.config.json
