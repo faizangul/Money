@@ -885,6 +885,8 @@ details.more{border-top:1px dashed var(--line);padding-top:8px}
 details.more summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--accent);list-style:none}
 details.more summary::-webkit-details-marker{display:none}
 details.more[open] summary{margin-bottom:10px}
+.bbadge{display:inline-block;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;font-size:11px;font-weight:700;line-height:16px;padding:1px 7px;border-radius:6px;background:var(--bb,var(--sunk));color:var(--bf,var(--muted));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 12%,transparent)}
+.acchero .bbadge{margin-bottom:8px}
 .cardtag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;background:color-mix(in srgb,var(--c3) 20%,transparent);color:var(--ink)}
 .tdot{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:700;font-size:15px;background:color-mix(in srgb,var(--g) 22%,transparent);color:color-mix(in srgb,var(--g) 72%,var(--ink))}
 .tdot svg{width:17px;height:17px}
@@ -1032,6 +1034,38 @@ function feat(n){const f=(S.cfg&&S.cfg.features)||{};if(n in f)return !!f[n];
   if(n==="investments")return accounts().some(a=>a.kind==="investment");
   if(n==="goals")return ((S.cfg&&S.cfg.goals)||[]).length>0;
   return true}
+/* ---------- bank badges: the bank's name on its brand colour (no logos) ---------- */
+/* m matches what people type in the Bank box; strict ones are too common as words to guess from an account name */
+const BANKS=[
+  {n:"CommBank",m:/\b(cba|commbank|commonwealth)\b/,bg:"#FFCC00",fg:"#000000"},
+  {n:"Westpac",m:/\bwestpac\b/,bg:"#D5002B",fg:"#FFFFFF"},
+  {n:"ANZ",m:/\banz\b/,bg:"#007DBA",fg:"#FFFFFF"},
+  {n:"NAB",m:/\bnab\b|national australia/,bg:"#C20000",fg:"#FFFFFF"},
+  {n:"ING",m:/\bing\b/,bg:"#FF6200",fg:"#000000"},
+  {n:"Macquarie",m:/\bmacquarie\b/,bg:"#000000",fg:"#FFFFFF"},
+  {n:"Bendigo Bank",m:/\bbendigo\b/,bg:"#A6192E",fg:"#FFFFFF"},
+  {n:"BOQ",m:/\bboq\b|bank of queensland/,bg:"#3C1053",fg:"#FFFFFF"},
+  {n:"Suncorp",m:/\bsuncorp\b/,bg:"#00857C",fg:"#FFFFFF"},
+  {n:"St.George",m:/\bst\.? ?george\b/,bg:"#00843D",fg:"#FFFFFF"},
+  {n:"Bankwest",m:/\bbankwest\b/,bg:"#FFD200",fg:"#000000"},
+  {n:"HSBC",m:/\bhsbc\b/,bg:"#DB0011",fg:"#FFFFFF"},
+  {n:"Great Southern Bank",m:/\bgreat southern\b/,bg:"#FF6A13",fg:"#000000"},
+  {n:"Bank Australia",m:/\bbank australia\b/,bg:"#00A88F",fg:"#000000"},
+  {n:"Newcastle Permanent",m:/\bnewcastle permanent\b/,bg:"#00558C",fg:"#FFFFFF"},
+  {n:"Amex",m:/\bamex\b|american express/,bg:"#016FD0",fg:"#FFFFFF"},
+  {n:"CommSec",m:/\bcommsec\b/,bg:"#FFCC00",fg:"#000000"},
+  {n:"Vanguard",m:/\bvanguard\b/,bg:"#96151D",fg:"#FFFFFF"},
+  {n:"Revolut",m:/\brevolut\b/,bg:"#191C1F",fg:"#FFFFFF"},
+  {n:"ubank",m:/\bubank\b/,bg:"#5B2D90",fg:"#FFFFFF"},
+  {n:"Up",m:/^up( bank)?$/,bg:"#FF7A64",fg:"#000000",strict:true},
+  {n:"AMP",m:/^amp( bank)?$/,bg:"#0B3B78",fg:"#FFFFFF",strict:true},
+  {n:"Wise",m:/^wise$/,bg:"#9FE870",fg:"#163300",strict:true}];
+/* {n,bg,fg} for the bank typed on the account, or one guessed from its name; an unknown bank gets a plain badge */
+function bankOf(a){if(!a)return null;const t=String(a.bank||"").trim();
+  if(t){const lo=t.toLowerCase();return BANKS.find(b=>b.m.test(lo))||{n:t}}
+  const lo=String(a.name||"").toLowerCase();return BANKS.find(b=>!b.strict&&b.m.test(lo))||null}
+function bankBadge(a){const b=bankOf(a);if(!b)return"";
+  return `<span class="bbadge"${b.bg?` style="--bb:${b.bg};--bf:${b.fg}"`:""}>${esc(b.n)}</span>`}
 const isInv=a=>!!a&&a.kind==="investment";
 const hasVal=a=>a&&a.value!==undefined&&a.value!==null&&a.value!=="";
 function acctValue(a,bal){if(isSuper(a))return superAt(a,"9999-12-31").worth;if(isInv(a)){const x=invAt(a,"9999-12-31");if(x)return x.worth}return bal[a.name]||0}
@@ -1761,13 +1795,13 @@ function vHome(){
     if(isInv(a)||isSuper(a))continue;
     if(a.kind==="credit"){cardsList.push(a);continue}
     const b=bal[a.name]||0;cash+=b;if(!shown(a))continue;
-    h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)}</div><div class="s">${esc(a.note||(KINDS.find(k=>k[0]===a.kind)||[,""])[1])}${a.emergency&&!/emergency/i.test(a.note||"")?" · emergency fund":""}</div></div><div class="amt num${b<0?" neg":""}">${money(b)}</div><span class="chev">›</span></button>`;
+    h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} ${bankBadge(a)}</div><div class="s">${esc(a.note||(KINDS.find(k=>k[0]===a.kind)||[,""])[1])}${a.emergency&&!/emergency/i.test(a.note||"")?" · emergency fund":""}</div></div><div class="amt num${b<0?" neg":""}">${money(b)}</div><span class="chev">›</span></button>`;
   }
   for(const k in bal){if(!accounts().some(a=>a.name===k))cash+=bal[k]}
   h+=`<div class="row total"><div class="main">Cash across accounts</div><div class="amt num${cash<0?" neg":""}">${money(cash)}</div></div>`;
   let owing=0;
   for(const a of cardsList){const ow=cardOwed(a,bal),lim=+a.limit||0;owing+=ow;
-    h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} <span class="cardtag">Card</span></div><div class="s">${ow>0.005?[lim?`${money0(Math.max(0,lim-ow))} available`:"Owing",+a.dueDay?`due ${shortDate(nextDue(+a.dueDay))}`:""].filter(Boolean).join(" · "):"Paid off"}</div></div><div class="amt num${ow>0.005?" neg":""}">${ow>0.005?"−":""}${money(ow)}</div><span class="chev">›</span></button>`}
+    h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} ${bankBadge(a)} <span class="cardtag">Card</span></div><div class="s">${ow>0.005?[lim?`${money0(Math.max(0,lim-ow))} available`:"Owing",+a.dueDay?`due ${shortDate(nextDue(+a.dueDay))}`:""].filter(Boolean).join(" · "):"Paid off"}</div></div><div class="amt num${ow>0.005?" neg":""}">${ow>0.005?"−":""}${money(ow)}</div><span class="chev">›</span></button>`}
   if(cardsList.length>1)h+=`<div class="row total"><div class="main">Owing on cards</div><div class="amt num">−${money(owing)}</div></div>`;
   for(const a of accounts().filter(isSuper)){const sa=superAt(a,"9999-12-31");
     h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} <span class="cardtag">${SUPER()}</span></div><div class="s">${sa.emp>0?`Includes ${money0(sa.emp)} employer, estimated`:"Locked until retirement"}</div></div><div class="amt num">${money(sa.worth)}</div><span class="chev">›</span></button>`}
@@ -2673,7 +2707,7 @@ function vAcct(){
   const ACT=(act,label,cls)=>`<button class="btn${cls?" "+cls:""}" data-act="${act}" data-a="${esc(a.name)}">${label}</button>`;
   let h="";
   if(card){const ow=Math.max(0,-now),lim=+a.limit||0,due=+a.dueDay?nextDue(+a.dueDay):"",rate=+a.rate||0;
-    h+=`<section class="card acchero"><div class="eyebrow">You owe</div><div class="big num${ow>0.005?" amt neg":""}" data-cnt="${ow}" data-fmt="m2">${money(ow)}</div>
+    h+=`<section class="card acchero">${bankBadge(a)?`<div>${bankBadge(a)}</div>`:""}<div class="eyebrow">You owe</div><div class="big num${ow>0.005?" amt neg":""}" data-cnt="${ow}" data-fmt="m2">${money(ow)}</div>
       ${lim?`<div class="limitbar"><i style="width:${Math.min(100,ow/lim*100).toFixed(1)}%"></i></div><div class="small muted num" style="display:flex;justify-content:space-between"><span>${money0(Math.max(0,lim-ow))} available</span><span>${money0(lim)} limit</span></div>`:""}
       <div style="margin-top:12px">${due?`<div class="kv"><span>Payment due</span><b>${dayLabel(due)}</b></div>`:""}
        ${rate?`<div class="kv"><span>Interest rate</span><b>${rate}% a year</b></div>`:""}
@@ -2682,7 +2716,7 @@ function vAcct(){
       ${ow>0.005?`<p class="small" style="margin:10px 0 0">${due?`Pay the full ${money0(ow)} by ${shortDate(due)} to avoid interest.`:"Pay it off in full each month to avoid interest."}${rate?` Carrying it would cost about ${money0(ow*rate/1200)} a month.`:""}</p>`:`<p class="small muted" style="margin:10px 0 0">Nothing owing. Nice.</p>`}
       <div class="btnrow" style="margin-top:12px">${ow>0.005?ACT("cardpay","Pay off card","primary"):""}${ACT("acctadd","Add a purchase")}${ACT("acctfix","Match my bank")}</div></section>`;
   }else if(sup){const sa=superAt(a,"9999-12-31"),al=superAt(a,"9999-12-31",true),start=+a.opening||0,growth=r2(sa.worth-start-al.own-al.emp);
-    h+=`<section class="card acchero"><div class="eyebrow">${sa.emp>0?"Balance, estimated":"Balance"}</div><div class="big num" data-cnt="${sa.worth}" data-fmt="m2">${money(sa.worth)}</div>
+    h+=`<section class="card acchero">${bankBadge(a)?`<div>${bankBadge(a)}</div>`:""}<div class="eyebrow">${sa.emp>0?"Balance, estimated":"Balance"}</div><div class="big num" data-cnt="${sa.worth}" data-fmt="m2">${money(sa.worth)}</div>
       <div class="kv"><span>${sa.last.start?"Balance when you started":"From your fund on "+shortDate(sa.last.d)}</span><b>${money(+sa.last.v||0)}</b></div>
       ${(a.sgMode||"pct")!=="off"?`<div class="kv"><span>Employer since then, estimated</span><b>+${money(sa.emp)}</b></div>`:""}
       ${Math.abs(sa.own)>0.005?`<div class="kv"><span>You added since then</span><b>${sa.own<0?"−":"+"}${money(Math.abs(sa.own))}</b></div>`:""}
@@ -2698,7 +2732,7 @@ function vAcct(){
       :`<p class="small muted" style="margin:0">${(a.sgMode||"pct")==="off"?"Nothing yet. Turn on the employer estimate in Settings → Accounts, or add a contribution.":"Employer super shows here each time you log your pay."}</p>`}</section>`;
     return h;
   }else if(inv){const v=acctValue(a,balances()),put=balances()[a.name]||0,iv=invAt(a,"9999-12-31"),hl=iv&&iv.last.h||[];
-    h+=`<section class="card acchero"><div class="eyebrow">Worth now</div><div class="big num" data-cnt="${v}" data-fmt="m2">${money(v)}</div>
+    h+=`<section class="card acchero">${bankBadge(a)?`<div>${bankBadge(a)}</div>`:""}<div class="eyebrow">Worth now</div><div class="big num" data-cnt="${v}" data-fmt="m2">${money(v)}</div>
       ${iv?`<div class="kv"><span>Holdings</span><b>${money(iv.hold)}</b></div><div class="kv"><span>Cash not invested</span><b class="${iv.cash<-0.5?"amt neg":""}">${money(iv.cash)}</b></div>`:""}
       <div class="kv"><span>Put in so far</span><b>${money(put)}</b></div>${iv?`<div class="kv"><span>${v>=put?"Up":"Down"}</span><b>${money(Math.abs(v-put))}</b></div>`:""}
       <div class="kv"><span>Holdings last updated</span><b>${iv?shortDate(iv.last.d):"Not yet"}</b></div>
@@ -2710,7 +2744,7 @@ function vAcct(){
       h+=`<section class="card"><div class="head"><h2>What you hold</h2><span class="small muted">at ${shortDate(iv.last.d)}</span></div><div class="rows">${hl.map(x=>`<div class="row"><div class="main"><div class="t">${esc(x.name||"Holding")}</div>${+x.units?`<div class="s num">${+x.units} unit${+x.units===1?"":"s"}${ht>0?" · "+Math.round((+x.value||0)/ht*100)+"%":""}</div>`:""}</div><div class="amt num">${money(+x.value||0)}</div></div>`).join("")}
         ${iv.cash>0.5?`<div class="row"><div class="main"><div class="t">Cash</div><div class="s">Not invested yet</div></div><div class="amt num">${money(iv.cash)}</div></div>`:""}</div></section>`}
   }else{
-    h+=`<section class="card acchero"><div class="eyebrow">Balance now</div><div class="big num${now<0?" amt neg":""}" data-cnt="${now}" data-fmt="m2">${money(now)}</div>
+    h+=`<section class="card acchero">${bankBadge(a)?`<div>${bankBadge(a)}</div>`:""}<div class="eyebrow">Balance now</div><div class="big num${now<0?" amt neg":""}" data-cnt="${now}" data-fmt="m2">${money(now)}</div>
       ${(()=>{const al=acctAlloc(a,balances());return a.emergency?`<p class="small muted" style="margin:0 0 8px">${al.goals>0?`${money0(al.free)} of this counts towards your emergency fund. ${money0(al.goals)} is set aside for goals.`:"Counts towards your emergency fund."}</p>`:""})()}
       ${+a.fee?`<div class="kv"><span>${(a.feeCad||"month")==="year"?"Annual fee":"Monthly fee"}</span><b>${money(+a.fee)}</b></div>`:""}
       ${a.intOn?(()=>{const nx=intNext(a),e=intEst(a),y=intYear(a);return `${nx?`<div class="kv"><span>Next interest</span><b>${e?"≈ "+money(e.amt)+" · ":""}${shortDate(nx)}</b></div>`:""}${+a.intRate?`<div class="kv"><span>Interest rate</span><b>${+a.intRate}% a year</b></div>`:""}<div class="kv"><span>Interest this year</span><b>${money(y)}</b></div>
@@ -3228,9 +3262,10 @@ function vSettings(){
   // accounts
   const FEECAD=[["month","Monthly"],["year","Yearly"]];
   mark("accounts");
-  h+=`<section class="card"><div class="head"><h2>Accounts and cards</h2></div><div class="elist">`;
+  h+=`<section class="card"><div class="head"><h2>Accounts and cards</h2></div><datalist id="banklist">${BANKS.map(b=>`<option value="${esc(b.n)}">`).join("")}</datalist><div class="elist">`;
   d.accounts.forEach((a,i)=>{const used=usedA.has(a.name),card=a.kind==="credit",inv=a.kind==="investment",dk="acc"+i;
     h+=`<div class="erow"><div class="erow-head">${used?`<div class="fixedname">${esc(a.name)}</div>`:`<input class="inp" type="text" id="acn${i}" data-s="accounts.${i}.name" value="${esc(a.name)}" aria-label="Account name" placeholder="${card?"Card name, e.g. AMEX":(AU()?"Account name, e.g. CBA Everyday":"Account name, e.g. Everyday account")}">`}${XBTN("accounts",i,!used)}</div>
+      <div class="two">${FL("Bank","acb"+i,`<input class="inp" type="text" id="acb${i}" data-s="accounts.${i}.bank" value="${esc(a.bank||"")}" list="banklist" autocomplete="off" placeholder="Optional, e.g. CommBank">`)}<div class="field"><label>Badge</label><div style="padding:8px 0">${bankBadge(a)||`<span class="small muted">None yet</span>`}</div></div></div>
       <div class="two">${FL("Type","ack"+i,SEL("ack"+i,`accounts.${i}.kind`,KINDS.map(([k,l])=>`<option value="${k}"${a.kind===k?" selected":""}>${l}</option>`).join("")))}
        ${card?FL("Owed at start","aco"+i,MONEYN("aco"+i,`accounts.${i}.opening`,-(+a.opening||0))):FL(inv?"Put in at start":"Balance at start","aco"+i,MONEY("aco"+i,`accounts.${i}.opening`,a.opening))}</div>
       ${card?`<div class="two">${FL("Credit limit","acl"+i,MONEY("acl"+i,`accounts.${i}.limit`,a.limit||0,"1"))}${FL("Due day of month","acd"+i,`<input class="inp" type="number" inputmode="numeric" min="1" max="31" step="1" id="acd${i}" data-s="accounts.${i}.dueDay" value="${a.dueDay||""}" placeholder="e.g. 15">`)}</div>
@@ -4282,7 +4317,7 @@ document.addEventListener("change",e=>{
     let v=el.type==="checkbox"?el.checked:el.type==="number"?(el.value===""?0:+el.value):el.value;if(el.dataset.sneg&&typeof v==="number")v=-v;setPath(S.draft,el.dataset.s,v);
     if(/recurring\.\d+\.type/.test(el.dataset.s)){const i=+el.dataset.s.split(".")[1];const r=S.draft.recurring[i];
       if(r.type==="Transfer"){r.category="Transfer";r.to=r.to||"";r.pay=false}else{const c=S.draft.categories.find(c=>c.kind===r.type);r.category=c?c.name:"";delete r.to;if(r.type!=="Income")r.pay=false}render()}
-    if(/^features\.|^goals\.\d+\.(account|where)$|^profile\.status$|\.remind\.on$|^accounts\.\d+\.(kind|fee|feeCad|sgMode|intOn)$|^region$/.test(el.dataset.s))render();
+    if(/^features\.|^goals\.\d+\.(account|where)$|^profile\.status$|\.remind\.on$|^accounts\.\d+\.(kind|fee|feeCad|sgMode|intOn|bank|name)$|^region$/.test(el.dataset.s))render();
     if(el.dataset.s==="currency"){setCurrency(S.draft.currency);render()}
     if(/^nudges\.threshold$|\.remind\.before$|^fire\.rate$/.test(el.dataset.s))setPath(S.draft,el.dataset.s,+el.value);
     if(/recurring\.\d+\.pay/.test(el.dataset.s)&&el.checked){const i=+el.dataset.s.split(".")[1];S.draft.recurring.forEach((r,j)=>{if(j!==i)r.pay=false});render()}
