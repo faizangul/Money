@@ -6,5 +6,6 @@ class AppViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(MoneyStorePlugin())
         bridge?.registerPluginInstance(SecureStorePlugin())
+        bridge?.registerPluginInstance(BiometricPlugin())
     }
 }

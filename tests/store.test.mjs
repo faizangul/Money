@@ -271,3 +271,30 @@ test("browser: the PIN stays in localStorage", async () => {
   await app.window.__mt.ready;
   assert.equal(app.window.__mt.secret.get("mt.pintries"), "{}");
 });
+
+test("every script in index.html compiles", () => {
+  for (const [, code] of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) new vm.Script(code);
+});
+
+test("browser: Face ID is reported as unavailable", async () => {
+  const app = launch();
+  assert.deepEqual({ ...(await app.window.__mt.bio.available()) }, { available: false, type: "none" });
+  assert.equal((await app.window.__mt.bio.authenticate("Unlock")).ok, false);
+});
+
+test("iOS: Face ID passes the saved enrolment state to the phone", async () => {
+  const disk = fakeSqlite();
+  const seen = [];
+  const call = disk.call;
+  disk.call = async (plugin, method, o) => {
+    if (plugin !== "Biometric") return call(plugin, method, o);
+    seen.push([method, o]);
+    if (method === "available") return { available: true, type: "faceID" };
+    return { ok: true, state: "NEW", changed: o.state !== undefined && o.state !== "NEW" };
+  };
+  const app = launch({ disk });
+  assert.equal((await app.window.__mt.bio.available()).type, "faceID");
+  assert.equal((await app.window.__mt.bio.authenticate("Turn on")).changed, false);
+  assert.equal((await app.window.__mt.bio.authenticate("Unlock", "OLD")).changed, true);
+  assert.deepEqual(seen.map(([m, o]) => [m, { ...o }]), [["available", {}], ["authenticate", { reason: "Turn on" }], ["authenticate", { reason: "Unlock", state: "OLD" }]]);
+});

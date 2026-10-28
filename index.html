@@ -71,6 +71,12 @@ const secret={
     return chain(()=>v==null?kc("remove",{key:k}):kc("set",{key:k,value:v})).catch(undo);
   }
 };
+/* Face ID / Touch ID, iOS app only; the PIN is always the fallback */
+const NOBIO={available:false,type:"none"};
+const bio={
+  available:()=>NATIVE?CAP.nativePromise("Biometric","available",{}).catch(()=>NOBIO):Promise.resolve(NOBIO),
+  authenticate:(reason,state)=>NATIVE?CAP.nativePromise("Biometric","authenticate",state?{reason,state}:{reason}).catch(()=>({ok:false,reason:"failed"})):Promise.resolve({ok:false,reason:"unavailable"})
+};
 let ready;
 if(NATIVE)ready=loadNative();
 else{
@@ -223,7 +229,7 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("change",e=>{if(e.target.id==="mtfile"&&e.target.files&&e.target.files[0]){readFile(e.target.files[0]);e.target.value=""}});
 
-window.__mt={card,nudge,firstRun,eraseAll,secret,ready:secretsReady};
+window.__mt={card,nudge,firstRun,eraseAll,secret,bio,ready:secretsReady};
 /* the database waits for the PIN settings, so the lock screen is up before any data shows */
 window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n==="downloads"?downloads:null};
 if("serviceWorker" in navigator&&location.protocol==="https:"){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))}
@@ -1816,6 +1822,29 @@ const secGet=k=>{if(SECRET)return SECRET.get(k);try{return localStorage.getItem(
 const secSet=(k,v)=>{if(SECRET)return SECRET.set(k,v);try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){return Promise.reject(e)}return Promise.resolve()};
 function pinCfg(){try{return JSON.parse(secGet(PINK)||"null")}catch(e){return null}}
 const pinSave=c=>secSet(PINK,c?JSON.stringify(c):null);
+/* Face ID / Touch ID unlock, saved with the PIN as c.bio plus c.bioState (which faces were enrolled when it
+   was turned on). If the enrolled faces change, it switches off and the PIN is needed. */
+const BIOAPI=window.__mt&&window.__mt.bio;
+let BIO={available:false,type:"none"},bioPrompting=false,bioQuietUntil=0;
+const bioReady=(BIOAPI?BIOAPI.available():Promise.resolve(BIO)).then(b=>{BIO=b;if(b.available){if(PL)pinDraw();if(S.view==="settings")render()}return b});
+const bioName=()=>({faceID:"Face ID",touchID:"Touch ID",opticID:"Optic ID"})[BIO.type]||"Face ID";
+const bioOn=()=>{const c=pinCfg();return !!(c&&c.bio&&BIO.available)};
+async function bioAsk(reason,state){bioPrompting=true;try{return await BIOAPI.authenticate(reason,state)}finally{bioPrompting=false;bioQuietUntil=Date.now()+1500}}
+async function bioTry(){await bioReady;const c=pinCfg();
+  if(!PL||PL.mode!=="unlock"||PL.forgot||bioPrompting||!c||!c.bio||!BIO.available)return;
+  const r=await bioAsk("Unlock Money Tracker",c.bioState);if(!PL||PL.mode!=="unlock")return;
+  if(r.ok&&r.changed){const n=Object.assign({},c);delete n.bio;delete n.bioState;try{await pinSave(n)}catch(e){}
+    PL.err=`${bioName()} changed on this phone. Enter your PIN, then turn ${bioName()} back on in Settings.`;return pinDraw()}
+  if(r.ok){pinTriesSet(null);pinHide();return}
+  if(r.reason==="lockout")PL.err=`${bioName()} is locked. Enter your PIN.`;
+  pinDraw()}
+async function bioEnable(){const c=pinCfg();if(!c||!BIO.available)return;
+  const r=await bioAsk(`Turn on ${bioName()} for Money Tracker`);
+  if(!r.ok){if(r.reason!=="cancelled"&&r.reason!=="fallback")toast(`${bioName()} didn't work. Try again.`);return}
+  try{await pinSave(Object.assign({},c,{bio:true,bioState:r.state}))}catch(e){toast("Couldn't save. Try again.");return}
+  toast(`${bioName()} is on`);render()}
+async function bioDisable(){const c=pinCfg();if(!c)return;const n=Object.assign({},c);delete n.bio;delete n.bioState;
+  try{await pinSave(n)}catch(e){toast("Couldn't save. Try again.");return}toast(`${bioName()} is off`);render()}
 async function pinHash(pin,salt){const d=new TextEncoder().encode(salt+":"+pin);try{const h=await crypto.subtle.digest("SHA-256",d);return [...new Uint8Array(h)].map(b=>b.toString(16).padStart(2,"0")).join("")}catch(e){let x=5381;for(const c of d)x=((x<<5)+x+c)>>>0;return "f"+x.toString(16)}}
 let PL=null;
 /* failed tries are remembered on the device, so reloading the page doesn't reset the wait; each lockout doubles, up to an hour */
@@ -1823,7 +1852,7 @@ const PINT="mt.pintries";
 function pinTries(){try{return Object.assign({tries:0,until:0,level:0},JSON.parse(secGet(PINT)||"null")||{})}catch(e){return {tries:0,until:0,level:0}}}
 function pinTriesSet(o){secSet(PINT,o?JSON.stringify(o):null).catch(e=>console.error(e))}
 function pinShow(mode){const pt=pinTries();PL={mode,entry:"",first:"",err:"",tries:pt.tries,until:pt.until,forgot:false,armed:false};let o=$("#pinlock");if(!o){o=document.createElement("div");o.id="pinlock";o.setAttribute("role","dialog");o.setAttribute("aria-modal","true");document.body.appendChild(o)}
-  document.body.classList.add("pinon");pinDraw()}
+  document.body.classList.add("pinon");pinDraw();if(mode==="unlock")bioTry()}
 function pinHide(){PL=null;const o=$("#pinlock");if(o){o.classList.add("out");setTimeout(()=>o.remove(),220)}document.body.classList.remove("pinon")}
 function pinDraw(){const o=$("#pinlock");if(!o||!PL)return;const m=PL.mode,wait=Math.max(0,Math.ceil((PL.until-Date.now())/1000));
   const title=m==="unlock"?"Enter your PIN":m==="set"?(PL.first?"Enter it again":"Choose a 4-digit PIN"):m==="off"?"Enter your PIN to turn it off":"Enter your current PIN";
@@ -1838,7 +1867,7 @@ function pinDraw(){const o=$("#pinlock");if(!o||!PL)return;const m=PL.mode,wait=
     <h2>${title}</h2><div class="pindots${PL.err?" shake":""}" aria-live="polite" aria-label="${PL.entry.length} of 4 entered">${[0,1,2,3].map(i=>`<i class="${i<PL.entry.length?"on":""}"></i>`).join("")}</div>
     <p class="pinmsg" role="alert">${wait?`Too many tries. Try again in ${wait>90?Math.ceil(wait/60)+" min":wait+"s"}.`:esc(PL.err||(m==="set"&&!PL.first?"You'll enter it when you open the app.":""))}</p>
     <div class="pinpad">${keys.map(k=>k===""?`<span></span>`:k==="del"?`<button type="button" data-pin="del" aria-label="Delete">⌫</button>`:`<button type="button" data-pin="${k}"${wait?" disabled":""}>${k}</button>`).join("")}</div>
-    ${m==="unlock"?`<button type="button" class="linkbtn" data-pin="forgot">Forgot PIN?</button>`:`<button type="button" class="linkbtn" data-pin="cancel">Cancel</button>`}</div>`;
+    ${m==="unlock"&&bioOn()?`<button type="button" class="linkbtn" data-pin="bio">Use ${bioName()}</button>`:""}${m==="unlock"?`<button type="button" class="linkbtn" data-pin="forgot">Forgot PIN?</button>`:`<button type="button" class="linkbtn" data-pin="cancel">Cancel</button>`}</div>`;
   if(wait)setTimeout(pinDraw,1000)}
 async function pinKey(k){if(!PL)return;if(PL.until>Date.now())return;
   if(k==="del"){PL.entry=PL.entry.slice(0,-1);PL.err="";return pinDraw()}
@@ -1846,7 +1875,7 @@ async function pinKey(k){if(!PL)return;if(PL.until>Date.now())return;
   const e=PL.entry,c=pinCfg();await new Promise(r=>setTimeout(r,120));
   if(PL.mode==="set"){if(!PL.first){PL.first=e;PL.entry="";return pinDraw()}
     if(PL.first!==e){PL.first="";PL.entry="";PL.err="Those didn't match. Choose a PIN again.";return pinDraw()}
-    const salt=Math.random().toString(36).slice(2,10),after=(c&&c.after)||0;try{await pinSave({h:await pinHash(e,salt),salt,after})}catch(x){PL.first="";PL.entry="";PL.err="Couldn't save your PIN. Try again.";return pinDraw()}pinHide();toast("PIN lock is on");render();return}
+    const salt=Math.random().toString(36).slice(2,10),after=(c&&c.after)||0,keep=c&&c.bio?{bio:true,bioState:c.bioState}:{};try{await pinSave(Object.assign(keep,{h:await pinHash(e,salt),salt,after}))}catch(x){PL.first="";PL.entry="";PL.err="Couldn't save your PIN. Try again.";return pinDraw()}pinHide();toast("PIN lock is on");render();return}
   const ok=c&&(await pinHash(e,c.salt))===c.h;
   if(!ok){const pt=pinTries();pt.tries++;PL.entry="";PL.err="Wrong PIN. Try again.";if(pt.tries>=5){pt.level++;pt.until=Date.now()+Math.min(3600,30*Math.pow(2,pt.level-1))*1000;pt.tries=0}pinTriesSet(pt);PL.tries=pt.tries;PL.until=pt.until;return pinDraw()}
   pinTriesSet(null);
@@ -1855,19 +1884,19 @@ async function pinKey(k){if(!PL)return;if(PL.until>Date.now())return;
   if(PL.mode==="change"){PL.mode="set";PL.entry="";PL.first="";return pinDraw()}}
 document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.closest("[data-pin]");if(!b||!PL)return;const k=b.dataset.pin;
   if(/^\d$/.test(k))return pinKey(k);if(k==="del")return pinKey("del");
-  if(k==="cancel"){pinHide();return}if(k==="forgot"){PL.forgot=true;PL.armed=false;return pinDraw()}if(k==="back"){PL.forgot=false;return pinDraw()}
+  if(k==="bio")return bioTry();if(k==="cancel"){pinHide();return}if(k==="forgot"){PL.forgot=true;PL.armed=false;return pinDraw()}if(k==="back"){PL.forgot=false;return pinDraw()}
   if(k==="remove"){try{await pinSave(null)}catch(x){toast("Couldn't remove the PIN. Try again.");return}pinHide();toast("PIN removed");render();return}
   if(k==="erase"){if(!PL.armed){PL.armed=true;return pinDraw()}if(window.__mt&&!await window.__mt.eraseAll()){toast("Couldn't erase. Try again.");return}try{await pinSave(null);await secSet(PINT,null)}catch(x){toast("Couldn't erase. Try again.");return}try{Object.keys(localStorage).filter(x=>/^mt\./.test(x)).forEach(x=>localStorage.removeItem(x))}catch(x){}location.reload()}});
 document.addEventListener("keydown",e=>{if(!PL||PL.forgot)return;if(/^\d$/.test(e.key)){e.preventDefault();pinKey(e.key)}else if(e.key==="Backspace"){e.preventDefault();pinKey("del")}else if(e.key==="Escape"&&PL.mode!=="unlock"){pinHide()}},true);
 let pinAway=0;
-document.addEventListener("visibilitychange",()=>{const c=pinCfg();if(!c)return;if(document.hidden){pinAway=Date.now();if(!(c.after>0)&&!PL)pinShow("unlock")}
+document.addEventListener("visibilitychange",()=>{const c=pinCfg();if(!c||bioPrompting||Date.now()<bioQuietUntil)return;if(document.hidden){pinAway=Date.now();if(!(c.after>0)&&!PL)pinShow("unlock")}
   else if(!PL&&pinAway&&Date.now()-pinAway>=(c.after||0)*1000)pinShow("unlock")});
 (window.__mt?window.__mt.ready:Promise.resolve()).then(()=>{if(pinCfg())pinShow("unlock")});
 function pinSetHtml(){const c=pinCfg();
   return `<section class="card"><div class="head"><h2>PIN lock</h2><span class="small ${c?"":"muted"}">${c?"On":"Off"}</span></div>
     <p class="small muted" style="margin:-4px 0 10px">Ask for a 4-digit PIN when the app opens. It's saved on this ${window.__mt?"phone":"device"} only.</p>
     ${c?`<div class="field"><label for="pinafter">Ask for it</label><select class="inp" id="pinafter"><option value="0"${!(c.after>0)?" selected":""}>Every time I open the app</option><option value="60"${c.after===60?" selected":""}>After 1 minute away</option><option value="300"${c.after===300?" selected":""}>After 5 minutes away</option></select></div>
-      <div class="btnrow" style="margin-top:10px"><button class="btn" data-act="pinchange">Change PIN</button><button class="btn" data-act="pinoff">Turn off</button></div>`
+      <div class="btnrow" style="margin-top:10px"><button class="btn" data-act="pinchange">Change PIN</button><button class="btn" data-act="pinoff">Turn off</button></div>${BIO.available?`<div class="head" style="margin-top:14px"><h2>${bioName()}</h2><span class="small ${c.bio?"":"muted"}">${c.bio?"On":"Off"}</span></div><p class="small muted" style="margin:-4px 0 10px">Unlock with ${bioName()} instead of typing your PIN. Your PIN still works if ${bioName()} doesn't.</p><button class="btn${c.bio?"":" primary"}" data-act="${c.bio?"biooff":"bioon"}">${c.bio?`Turn off ${bioName()}`:`Turn on ${bioName()}`}</button>`:""}`
      :`<button class="btn primary" data-act="pinon">Turn on PIN lock</button>`}</section>`}
 document.addEventListener("change",e=>{if(e.target&&e.target.id==="pinafter"){const c=pinCfg();if(c){c.after=+e.target.value;pinSave(c).then(()=>toast("Saved"),()=>toast("Couldn't save. Try again."))}}});
 /* ---------- import a bank statement (CSV or PDF) ---------- */
@@ -4065,6 +4094,8 @@ document.addEventListener("click",async e=>{
     case "pinon":pinShow("set");break;
     case "pinoff":pinShow("off");break;
     case "pinchange":pinShow("change");break;
+    case "bioon":bioEnable();break;
+    case "biooff":bioDisable();break;
     case "imcheckx":try{localStorage.setItem("mt.imcheckx",today())}catch(e){}render();break;
     case "imcardx":try{localStorage.setItem("mt.imcardx","1")}catch(e){}render();break;
     case "fanimport":closeFan(true);openImport();break;
