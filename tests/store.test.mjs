@@ -24,9 +24,10 @@ function fakeLocalStorage(init = {}) {
 function fakeSqlite() {
   const docs = new Map(), kv = new Map();
   const keychain = new Map();
-  const disk = { docs, kv, keychain, failNext: false, failKeychain: false, calls: [] };
+  const disk = { docs, kv, keychain, failNext: false, failKeychain: false, calls: [], shared: [], shareResult: "saved" };
   disk.call = async (plugin, method, o) => {
     if (plugin === "SecureStore") return fakeKeychain(disk, method, o);
+    if (plugin === "Share") return fakeShare(disk, method, o);
     assert.equal(plugin, "MoneyStore");
     disk.calls.push(method);
     if (disk.failNext && method !== "load") { disk.failNext = false; throw { code: "write_failed" }; }
@@ -49,6 +50,14 @@ async function fakeKeychain(disk, method, o) {
 }
 
 // claude: a stand-in for Claude's own window.claude, there before the app's scripts run.
+// Same contract as ios/App/App/SharePlugin.swift.
+async function fakeShare(disk, method, o) {
+  assert.equal(method, "share");
+  if (disk.shareResult !== "saved") throw { code: disk.shareResult };
+  disk.shared.push(o);
+  return { status: "saved" };
+}
+
 function launch({ disk = null, localStorage = fakeLocalStorage(), claude = null } = {}) {
   const document = { addEventListener() {}, createElement() { return {}; }, body: {} };
   const window = { addEventListener() {}, scrollTo() {} };
@@ -342,4 +351,26 @@ test("iOS: Face ID passes the saved enrolment state to the phone", async () => {
   assert.equal((await app.window.__mt.bio.authenticate("Turn on")).changed, false);
   assert.equal((await app.window.__mt.bio.authenticate("Unlock", "OLD")).changed, true);
   assert.deepEqual(seen.map(([m, o]) => [m, { ...o }]), [["available", {}], ["authenticate", { reason: "Turn on" }], ["authenticate", { reason: "Unlock", state: "OLD" }]]);
+});
+
+test("each version reports which platform it is", () => {
+  assert.equal(launch().window.__platform, "web");
+  assert.equal(launch({ disk: fakeSqlite() }).window.__platform, "ios");
+  assert.equal(launch({ claude: { use: async () => null } }).window.__platform, "claude");
+});
+
+test("iOS: files go to the native share sheet as text", async () => {
+  const disk = fakeSqlite();
+  const dl = await launch({ disk }).use("downloads");
+  assert.equal((await dl.save({ filename: "transactions.csv", data: "date,amount\n2026-10-28,-4.50" })).status, "saved");
+  assert.equal(JSON.stringify(disk.shared), JSON.stringify([{ filename: "transactions.csv", data: "date,amount\n2026-10-28,-4.50" }]));
+});
+
+test("iOS: closing the share sheet is reported as cancelled, other failures as unavailable", async () => {
+  const disk = fakeSqlite();
+  const dl = await launch({ disk }).use("downloads");
+  disk.shareResult = "declined";
+  await assert.rejects(dl.save({ filename: "b.json", data: "{}" }), { code: "declined" });
+  disk.shareResult = "write_failed";
+  await assert.rejects(dl.save({ filename: "b.json", data: "{}" }), { code: "unavailable" });
 });

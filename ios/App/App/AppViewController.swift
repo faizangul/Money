@@ -8,5 +8,6 @@ class AppViewController: CAPBridgeViewController {
         bridge?.registerPluginInstance(SecureStorePlugin())
         bridge?.registerPluginInstance(BiometricPlugin())
         bridge?.registerPluginInstance(NotifyPlugin())
+        bridge?.registerPluginInstance(SharePlugin())
     }
 }

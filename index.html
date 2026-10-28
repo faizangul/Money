@@ -21,11 +21,17 @@
    plus backup and restore through files. */
 (function(){
 "use strict";
+/* Which version is running: "claude" (inside Claude), "ios" (the App Store app) or "web" (GitHub Pages or
+   any browser). Native features check this and fall back to what a browser can do. */
+const CAP=window.Capacitor;
+const PLATFORM=window.claude&&typeof window.claude.use==="function"?"claude"
+  :CAP&&CAP.isNativePlatform&&CAP.isNativePlatform()&&CAP.nativePromise?"ios":"web";
+window.__platform=PLATFORM;
 /* Inside Claude, window.claude is Claude's own storage: leave it, and everything below, alone */
-if(window.claude&&typeof window.claude.use==="function")return;
+if(PLATFORM==="claude")return;
+const NATIVE=PLATFORM==="ios";
 const KEY="mt.store.v1",META="mt.meta.v1";
 let store={},meta={},storageOk=true;
-const CAP=window.Capacitor,NATIVE=!!(CAP&&CAP.isNativePlatform&&CAP.isNativePlatform()&&CAP.nativePromise);
 const sql=(m,o)=>CAP.nativePromise("MoneyStore",m,o||{});
 const rows=s=>Object.keys(s).map(p=>({p,d:JSON.stringify(s[p])}));
 /* native calls run one after another, so saves land in the order they were made */
@@ -143,7 +149,13 @@ function collRef(c){return{path:c,
   onSnapshot(next){const f=()=>{const docs=members(c);next({docs,size:docs.length,empty:!docs.length,docChanges:()=>[],metadata:{}})};subs.add(f);setTimeout(f,0);return()=>subs.delete(f)}}}
 const db={doc:docRef,collection:collRef};
 
+/* iOS: the native share sheet (Save to Files, AirDrop, Mail). Web: the browser's share sheet where it can
+   share files, otherwise a download. Calendar files always download so the browser offers to add them. */
 async function saveFile(name,data,type){
+  if(NATIVE){
+    try{await CAP.nativePromise("Share","share",{filename:name,data});return{status:"saved"}}
+    catch(e){throw e&&e.code==="declined"?{code:"declined",message:"Cancelled"}:{code:"unavailable",message:"Couldn't share the file"}}
+  }
   const blob=new Blob([data],{type});
   let file=null;try{file=new File([blob],name,{type})}catch(e){}
   if(type!=="text/calendar"&&file&&navigator.canShare&&navigator.canShare({files:[file]})){

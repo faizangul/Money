@@ -21,6 +21,7 @@
 		A1C0DE012FF0000100000006 /* SecureStorePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE012FF0000100000005 /* SecureStorePlugin.swift */; };
 		A1C0DE012FF0000100000008 /* BiometricPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE012FF0000100000007 /* BiometricPlugin.swift */; };
 		A1C0DE012FF000010000000A /* NotifyPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE012FF0000100000009 /* NotifyPlugin.swift */; };
+		A1C0DE012FF000010000000C /* SharePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C0DE012FF000010000000B /* SharePlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -40,6 +41,7 @@
 		A1C0DE012FF0000100000005 /* SecureStorePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureStorePlugin.swift; sourceTree = "<group>"; };
 		A1C0DE012FF0000100000007 /* BiometricPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricPlugin.swift; sourceTree = "<group>"; };
 		A1C0DE012FF0000100000009 /* NotifyPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotifyPlugin.swift; sourceTree = "<group>"; };
+		A1C0DE012FF000010000000B /* SharePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharePlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -80,6 +82,7 @@
 				A1C0DE012FF0000100000005 /* SecureStorePlugin.swift */,
 				A1C0DE012FF0000100000007 /* BiometricPlugin.swift */,
 				A1C0DE012FF0000100000009 /* NotifyPlugin.swift */,
+				A1C0DE012FF000010000000B /* SharePlugin.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -180,6 +183,7 @@
 				A1C0DE012FF0000100000006 /* SecureStorePlugin.swift in Sources */,
 				A1C0DE012FF0000100000008 /* BiometricPlugin.swift in Sources */,
 				A1C0DE012FF000010000000A /* NotifyPlugin.swift in Sources */,
+				A1C0DE012FF000010000000C /* SharePlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
