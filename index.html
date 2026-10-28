@@ -887,6 +887,16 @@ details.more summary::-webkit-details-marker{display:none}
 details.more[open] summary{margin-bottom:10px}
 .bbadge{display:inline-block;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;font-size:11px;font-weight:700;line-height:16px;padding:1px 7px;border-radius:6px;background:var(--bb,var(--sunk));color:var(--bf,var(--muted));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 12%,transparent)}
 .acchero .bbadge{margin-bottom:8px}
+.calnav{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}.calnav h2{margin:0}
+.calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin:12px 0 8px}
+.calw{text-align:center;font-size:11px;font-weight:700;color:var(--muted);padding:2px 0}
+.calc{display:flex;flex-direction:column;align-items:center;gap:1px;min-height:54px;padding:4px 1px;border:0;border-radius:9px;background:var(--sunk);color:var(--ink);font:inherit;overflow:hidden}
+.calc.pad{background:none}.calc b{font-size:13px}.calc .num{font-size:10px;line-height:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.calc .out{color:var(--neg)}.calc .in{color:var(--pos)}
+.calc.today{box-shadow:inset 0 0 0 2px var(--accent)}.calc.sel{background:var(--accent);color:var(--accent-ink)}.calc.sel .out,.calc.sel .in{color:inherit}
+.calc .dots,.callegend{display:flex;gap:3px;justify-content:center}.callegend{gap:12px;justify-content:flex-start;margin:0 0 6px}
+.calc .dots i,.callegend i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--warn);margin-right:4px}.calc .dots i{margin:0}
+.calc .dots i.in,.callegend i.in{background:var(--pos)}.calc .dots i.mv,.callegend i.mv{background:var(--c2)}.calc.sel .dots i{box-shadow:0 0 0 1px var(--accent-ink)}
 .cardtag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px;border-radius:6px;background:color-mix(in srgb,var(--c3) 20%,transparent);color:var(--ink)}
 .tdot{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:700;font-size:15px;background:color-mix(in srgb,var(--g) 22%,transparent);color:color-mix(in srgb,var(--g) 72%,var(--ink))}
 .tdot svg{width:17px;height:17px}
@@ -1020,7 +1030,7 @@ const S={db:null,dl:null,cfg:null,cfgLoaded:false,tx:[],txLoaded:false,props:[],
 try{const v=localStorage.getItem("mt.view");if(v)S.view=v}catch(e){}
 if(/^#[a-z]+$/.test(location.hash))S.view=location.hash.slice(1);
 /* an account page needs to know which account; after a reload that's gone, so open Home instead */
-if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget"].includes(S.view))S.view="home";
+if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget","calendar"].includes(S.view))S.view="home";
 
 /* ---------- derived data ---------- */
 const cats=()=>S.cfg?S.cfg.categories:[];
@@ -1372,9 +1382,11 @@ function occurrences(r,from,to){
   }
   return out;
 }
-function upcoming0(){
+function upcoming0(){const t=today();return upcomingIn(addDays(t,-45),addDays(t,21))}
+/* every expected bill, pay, card payment, fee, interest and loan repayment from..to that isn't logged or skipped */
+function upcomingIn(from,to){
   if(!S.cfg)return[];
-  const t=today(),from=addDays(t,-45),to=addDays(t,21);
+  const t=today();
   const logged=new Set(S.tx.filter(x=>x.rec).map(x=>x.rec));
   const list=[];
   for(const r of S.cfg.recurring||[]){
@@ -1388,7 +1400,7 @@ function upcoming0(){
   for(const a of accounts()){
     if(a.kind==="credit"&&+a.dueDay){const owed=cardOwed(a);
       if(owed>0.005){const r={id:"card:"+a.name,desc:"Pay "+a.name,type:"Transfer",category:"Transfer",account:payFrom(a),to:a.name,amount:r2(owed),cadence:"month",anchor:"2024-01-"+pad(Math.min(31,+a.dueDay)),skipped:a.paySkipped||[],card:true};
-        for(const d of occurrences(r,(addDays(t,-10)>st0?addDays(t,-10):st0),to)){const key=r.id+"@"+d;if(logged.has(key)||r.skipped.includes(d))continue;list.push({r,d,key,overdue:d<t,today:d===t})}}}
+        for(const d of occurrences(r,[from,addDays(t,-10),st0].sort().pop(),to)){const key=r.id+"@"+d;if(logged.has(key)||r.skipped.includes(d))continue;list.push({r,d,key,overdue:d<t,today:d===t})}}}
     if(+a.fee>0&&a.feeDate){const r={id:"fee:"+a.name,desc:a.name+(a.kind==="credit"&&(a.feeCad||"year")==="year"?" annual fee":" fee"),type:"Expense",category:feeCat(),account:a.name,amount:+a.fee,cadence:a.feeCad||"year",anchor:a.feeDate,skipped:a.feeSkipped||[],fee:true};
       for(const d of occurrences(r,(from>st0?from:st0),to)){const key=r.id+"@"+d;if(logged.has(key)||r.skipped.includes(d))continue;list.push({r,d,key,overdue:d<t,today:d===t})}}
   }
@@ -1401,6 +1413,7 @@ function upcoming0(){
   const ord=x=>x.r.pay?0:x.r.type==="Transfer"?1:2;
   return list.sort((a,b)=>a.d.localeCompare(b.d)||ord(a)-ord(b));
 }
+function dueByKey(k){const d=k.slice(k.lastIndexOf("@")+1);return upcoming().find(x=>x.key===k)||(/^\d{4}-\d{2}-\d{2}$/.test(d)?upcomingIn(d,d).find(x=>x.key===k):null)}
 function trackStart(){return S.tx.reduce((m,t)=>t.date<m?t.date:m,today())}
 function cardOwed(a,bal){bal=bal||balances();return Math.max(0,-(bal[a.name]||0))}
 function dayIn(m,day){const last=new Date(Date.UTC(+m.slice(0,4),+m.slice(5),0)).getUTCDate();return m+"-"+pad(Math.max(1,Math.min(day,last)))}
@@ -1655,9 +1668,9 @@ let raf=0;
 function render(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;draw()})}
 function draw(){syncRegion();
   document.querySelectorAll("nav.tabs [data-go]").forEach(b=>{
-    const v=b.dataset.go;const on=v===S.view||(v==="home"&&S.view==="acct")||(v==="more"&&["people","trading","loans","settings","plan","tax"].includes(S.view));
+    const v=b.dataset.go;const on=v===S.view||(v==="home"&&S.view==="acct")||(v==="more"&&["people","trading","loans","settings","plan","tax","calendar"].includes(S.view));
     on?b.setAttribute("aria-current","page"):b.removeAttribute("aria-current")});
-  const titles={acct:S.acct||"Account",insights:"Insights",plan:"Money methods",home:"Money",activity:"Activity",budget:"Budget",more:"More",tax:"Tax time",people:feat("loans")?(feat("people")?"People and loans":"Loans"):"People",trading:"Prop trading",loans:"Loans",settings:S.sset?({accounts:"Accounts",budget:"Budget",bills:"Bills and pay",goals:"Goals",loans:"Loans",you:"Profile and look",reminders:"Reminders",track:"What to track",methods:"Money methods"}[S.sset]||"Settings"):"Settings"};
+  const titles={acct:S.acct||"Account",calendar:"Calendar",insights:"Insights",plan:"Money methods",home:"Money",activity:"Activity",budget:"Budget",more:"More",tax:"Tax time",people:feat("loans")?(feat("people")?"People and loans":"Loans"):"People",trading:"Prop trading",loans:"Loans",settings:S.sset?({accounts:"Accounts",budget:"Budget",bills:"Bills and pay",goals:"Goals",loans:"Loans",you:"Profile and look",reminders:"Reminders",track:"What to track",methods:"Money methods"}[S.sset]||"Settings"):"Settings"};
   $("#ttl").textContent=titles[S.view]||"Money Tracker";
   {const bb=$("#backbtn");if(bb){const pv=S.hist.length?S.hist[S.hist.length-1]:null;bb.hidden=!pv;if(pv)bb.setAttribute("aria-label","Back to "+((titles[pv.view]||"previous screen").replace(/^Money$/,"Home")))}}
   if(S.view==="budget"){S.view="insights";S.itab="budget"}
@@ -1669,7 +1682,7 @@ function draw(){syncRegion();
   if(S.state==="error"){app.innerHTML=`<div class="card empty"><h2>Can't reach your data right now</h2><p class="muted">Nothing is lost. Check your connection, then try again.</p><p><button class="btn primary" data-act="retryload">Try again</button></p></div>`;return}
   if(S.state==="nodb"){app.innerHTML=`<div class="card empty"><h2>Couldn't open your data</h2><p class="muted">Money Tracker couldn't read its storage on this device. Close the app fully and open it again. Your data hasn't been deleted.</p></div>`;return}
   if(!S.cfg){app.innerHTML=vWelcome();return}
-  const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct}[S.view]||vHome;
+  const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct,calendar:vCal}[S.view]||vHome;
   const vkey=[S.view,S.view==="insights"?S.itab:"",S.acct||"",S.sset||""].join("|"),mkey=vkey+"|"+S.month,prevTab=S._vkey&&S._vkey.split("|")[0]===S.view&&S.view==="insights"?S._vkey.split("|")[1]:null;
   const pillFrom=(()=>{const t=document.querySelector("#app .subtabs .pill");return t?{x:t.style.transform,w:t.style.width,k:t.dataset.k}:null})();
   app.innerHTML=(S.demo?`<div class="demobar" role="status"><p><b>Sample data.</b> Explore freely, nothing here is saved.</p><button class="btn sm" data-act="demoexit">Exit</button></div>`:"")+v();
@@ -1757,7 +1770,7 @@ function vHome(){
   mark("upcoming");
   const up=upcoming().filter(u=>cur?true:ym(u.d)===m);
   if(up.length){
-    h+=`<section class="card"><div class="head"><h2>Coming up</h2><span class="small muted">next 3 weeks</span></div><div class="rows">`;
+    h+=`<section class="card"><div class="head"><h2>Coming up</h2><button class="linkbtn" data-go="calendar">Calendar</button></div><div class="rows">`;
     for(const u of up.slice(0,6)){
       const pill=u.overdue?`<span class="pill over">${shortDate(u.d)} · overdue</span>`:u.today?`<span class="pill due">Today</span>`:`<span class="pill">${dayLabel(u.d)}</span>`;
       h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${pill} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
@@ -1865,6 +1878,41 @@ function txRow(t){
   return swipeWrap("tx:"+t.id,`<button class="row tx" data-act="edit" data-id="${esc(t.id)}"><span class="tdot" style="--g:${GROUPS[g][1]}" title="${GROUPS[g][0]}" aria-hidden="true">${lbl}</span><div class="main"><div class="t">${esc(t.desc||t.category||t.type)}</div><div class="s">${esc(sub)}</div></div><div class="amt num ${cls}">${sign}${money(Math.abs(a))}</div></button>`);
 }
 
+/* ---------- calendar: what came in and went out each day, and what's expected ---------- */
+/* {days:{date:{out,in,tx,due}},out,in,due} for month m; expected items only from today on (plus this month's overdue ones) */
+function calMonth(m){return memo("cal",m,()=>{
+  const t=today(),start=m+"-01",end=dayIn(m,31),days={};let out=0,inn=0,due=0;
+  const day=d=>days[d]||(days[d]={out:0,in:0,tx:[],due:[]});
+  for(const x of S.tx){if(ym(x.date)!==m)continue;const D=day(x.date),a=+x.amount||0;D.tx.push(x);
+    if(x.type==="Expense"){D.out+=a;out+=a}else if(x.type==="Income"){D.in+=a;inn+=a}}
+  if(end>=t)for(const u of upcomingIn(start,end)){day(u.d).due.push(u);if(u.r.type==="Expense"||u.r.card)due+=+u.r.amount||0}
+  for(const d in days){const D=days[d];D.out=r2(D.out);D.in=r2(D.in);D.tx.sort((a,b)=>(b.created||0)-(a.created||0))}
+  return{days,out:r2(out),in:r2(inn),due:r2(due)}})}
+let FMTK=null;
+const calAmt=n=>{if(!FMTK||FMTK.cur!==CUR){FMTK=new Intl.NumberFormat("en-AU",{style:"currency",currency:CUR,notation:"compact",maximumFractionDigits:1});FMTK.cur=CUR}return FMTK.format(Math.round(n))};
+const dueKind=u=>u.r.type==="Income"?"in":u.r.card||u.r.type==="Transfer"?"mv":"out";
+function dueRow(u){
+  const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:"";
+  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${pill} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+    <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
+    <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip")}
+function vCal(){
+  const t=today(),m=S.calMonth||ym(t),c=calMonth(m),last=+dayIn(m,31).slice(8);
+  const lead=(new Date(m+"-01T00:00:00Z").getUTCDay()+6)%7;/* weeks start on Monday */
+  const sel=S.calDay&&ym(S.calDay)===m?S.calDay:(ym(t)===m?t:"");
+  let cells="";for(let i=0;i<lead;i++)cells+=`<span class="calc pad" aria-hidden="true"></span>`;
+  for(let n=1;n<=last;n++){const d=m+"-"+pad(n),D=c.days[d],kinds=D?[...new Set(D.due.map(dueKind))]:[];
+    const label=[shortDate(d),D&&D.out?`spent ${money(D.out)}`:"",D&&D.in?`earned ${money(D.in)}`:"",D&&D.due.length?`${D.due.length} expected`:""].filter(Boolean).join(", ");
+    cells+=`<button class="calc${d===t?" today":""}${d===sel?" sel":""}" data-act="calday" data-d="${d}" aria-label="${esc(label)}" aria-pressed="${d===sel}"><b>${n}</b>${D&&D.out?`<span class="num out">${calAmt(D.out)}</span>`:""}${D&&D.in?`<span class="num in">${calAmt(D.in)}</span>`:""}${kinds.length?`<span class="dots">${kinds.map(k=>`<i class="${k}"></i>`).join("")}</span>`:""}</button>`}
+  let h=`<section class="card"><div class="calnav"><button class="btn sm" data-act="calm" data-n="-1" aria-label="Previous month">‹</button><h2>${mLabel(m)}</h2><button class="btn sm" data-act="calm" data-n="1" aria-label="Next month">›</button></div>
+    ${m>ym(t)?"":`<div class="kv"><span>Spent</span><b class="num">${money(c.out)}</b></div><div class="kv"><span>Earned</span><b class="num">${money(c.in)}</b></div>`}${c.due?`<div class="kv"><span>Bills still due</span><b class="num">${money(c.due)}</b></div>`:""}
+    <div class="calgrid" role="group" aria-label="${mLabel(m)}">${["M","T","W","T","F","S","S"].map(x=>`<span class="calw" aria-hidden="true">${x}</span>`).join("")}${cells}</div>
+    <p class="small muted callegend"><span><i class="out"></i>bill</span><span><i class="in"></i>pay</span><span><i class="mv"></i>card or transfer</span></p>
+    ${ym(t)!==m?`<button class="linkbtn" data-act="calm" data-n="0">Back to this month</button>`:""}</section>`;
+  if(sel){const D=c.days[sel]||{tx:[],due:[]};
+    h+=`<section class="card"><div class="head"><h2>${esc(dayLabel(sel))}</h2></div>${!D.tx.length&&!D.due.length?`<p class="muted" style="margin:0">Nothing on this day.</p>`:""}
+      ${D.due.length?`<div class="rows">${D.due.map(dueRow).join("")}</div>`:""}${D.tx.length?`<div class="rows">${D.tx.map(txRow).join("")}</div>`:""}</section>`}
+  return h}
 function vActivity(){return imCard()+vActivity0()}
 function vActivity0(){
   const q=S.actQ.trim().toLowerCase();
@@ -2321,6 +2369,7 @@ function vMore(){
   return draftBanner()+`<section class="card menu"><div class="rows">
     ${feat("people")||feat("loans")?item("people",feat("people")&&feat("loans")?"People and loans":feat("loans")?"Loans":"People",[feat("people")?(ppl.length?(net>0?`Owed to you ${money(net)}`:net<0?`You owe ${money(-net)}`:"IOUs all square"):"IOUs with friends and family"):"",feat("loans")?(loans.length?`${money0(loans.reduce((s,l)=>s+l.owing,0))} owing on loans`:"Loans you're paying down"):""].filter(Boolean).join(" · ")):""}
     ${feat("trading")?item("trading","Prop trading",tt.n?`${tt.n} accounts · net ${money0(tt.net)}`:"Accounts you buy and their payouts"):""}
+    ${item("calendar","Calendar","What came in and went out each day, and what's coming up")}
     <button class="row" data-act="import"><div class="main"><div class="t">Import a bank statement</div><div class="s">Add what you missed and fix what's off</div></div><span class="chev">›</span></button>
     ${item("tax","Tax time","Income, interest, super and possible deductions for the year")}
     ${item("plan","Money methods","50/30/20, Barefoot-style buckets, your FIRE number")}
@@ -4023,7 +4072,7 @@ async function swipeAction(key){
     else if(kind==="goal"){const i=+id,c=JSON.parse(JSON.stringify(S.cfg));const [gone]=c.goals.splice(i,1);if(!gone)return;await S.db.doc("app/config").set(c);
       if(S.draft&&S.draft.goals){S.draft.goals.splice(i,1);if(S.draftDirty)markDraft()}
       toastUndo(`Deleted ${gone.name}`,async()=>{const c2=JSON.parse(JSON.stringify(S.cfg));c2.goals=c2.goals||[];c2.goals.splice(Math.min(i,c2.goals.length),0,gone);await S.db.doc("app/config").set(c2);if(S.draft&&S.draft.goals)S.draft.goals.splice(Math.min(i,S.draft.goals.length),0,gone)})}
-    else if(kind==="skip"){const u=upcoming().find(x=>x.key===id);if(!u)return;await setSkip(u,true);
+    else if(kind==="skip"){const u=dueByKey(id);if(!u)return;await setSkip(u,true);
       toastUndo(`Skipped ${u.r.desc} (${shortDate(u.d)})`,()=>setSkip(u,false))}
   }catch(e){toast(dbMsg(e));render()}
 }
@@ -4110,9 +4159,11 @@ document.addEventListener("click",async e=>{
       if(!F.armed){readForm();F.armed=true;drawSheet();return}
       try{const t0=S.tx.find(x=>x.id===F.id);await S.db.doc("tx/"+F.id).delete();await skipAutoInterest(t0).catch(()=>false);toast("Deleted");F=null;drawSheet()}catch(err){F.err=dbMsg(err);F.armed=false;drawSheet()}break;
     case "edit":{const t=S.tx.find(x=>x.id===a.dataset.id);if(t)openTx({...t,amount:String(Math.abs(+t.amount||0)),neg:(+t.amount||0)<0,person:t.person||"",to:t.to||"",touched:{},step:3,ready:true});break}
-    case "logrec":{const u=upcoming().find(x=>x.key===a.dataset.key);if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u)openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:u.r.amount?String(u.r.amount):"",touched:{type:1,category:1,account:1,to:1}});break}
-    case "skiprec":{const u=upcoming().find(x=>x.key===a.dataset.key);if(!u)return;try{await setSkip(u,true);toastUndo(`Skipped ${u.r.desc}`,()=>setSkip(u,false))}catch(err){toast(dbMsg(err))}break}
+    case "logrec":{const u=dueByKey(a.dataset.key);if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u)openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:u.r.amount?String(u.r.amount):"",touched:{type:1,category:1,account:1,to:1}});break}
+    case "skiprec":{const u=dueByKey(a.dataset.key);if(!u)return;try{await setSkip(u,true);toastUndo(`Skipped ${u.r.desc}`,()=>setSkip(u,false))}catch(err){toast(dbMsg(err))}break}
     case "actm":S.actMonth=a.dataset.m;S.actLim=0;render();break;
+    case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
+    case "calday":S.calDay=a.dataset.d;render();break;
     case "actt":S.actType=a.dataset.t;S.actLim=0;render();break;
     case "actmore":S.actLim=(S.actLim||200)+200;render();break;
     case "person":S.actQ=a.dataset.p;S.actType="All";S.actMonth="all";go("activity");break;
