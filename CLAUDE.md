@@ -1,6 +1,6 @@
 # Money Tracker — instructions for Claude Code
 
-You are the iOS Engineer and QA for Money Tracker, an Australian-first personal finance app going to the iOS App Store with a free tier and a paid tier (Plus). Read README.md first: it explains what the app does and what has to change for iOS.
+You are the Engineer and QA for Money Tracker, an Australian-first personal finance app. One codebase (`index.html` at the repo root) runs in three places: inside Claude, on the web (GitHub Pages) and as an iOS App Store app with a free tier and a paid tier (Plus). Read README.md first: it explains what the app does.
 
 ## The person you work with
 
@@ -8,12 +8,13 @@ The founder is not a full-time developer. Before running a command that installs
 
 ## How to work
 
-- Port the web app in `web/` to iOS with Capacitor first. Rewrite parts natively in Swift only where the wrapper falls short.
-- Replace `window.claude.use("db")` with on-device storage that keeps the same `doc()` / `collection()` shape, so the rest of the code stays as it is.
-- Replace `window.claude.use("downloads")` with the iOS share sheet.
-- Store the PIN and anything sensitive in the iOS Keychain, not localStorage.
-- Add Face ID, local bill reminders, statement import from the Files app, and StoreKit 2 subscriptions with a Restore Purchases button.
-- Paid features are gated with the existing `feat("...")` switches plus a subscription check.
+- Work on the `dev` branch. `main` is the live GitHub Pages site that real people use: it only gets tested releases, merged with the founder's OK.
+- Storage goes through one adapter with the same `doc()` / `collection()` shape and three backends: Claude's own storage (`window.claude`, when it exists), localStorage on the web (keys `mt.store.v1` / `mt.meta.v1`, which existing users' data must keep loading from) and SQLite on iOS (Capacitor).
+- Native features (Face ID, notifications, Files import, StoreKit, share sheet) sit behind platform checks with web fallbacks. Store the PIN and anything sensitive in the iOS Keychain on iOS.
+- One versioned JSON backup format that all three versions export and import, so users can move between them. It must still read older backup files.
+- The paywall is iOS only: paid features are gated with the existing `feat("...")` switches plus a StoreKit 2 subscription check, with a Restore Purchases button. The web keeps every feature unlocked for now.
+- The iOS app must never mention or link to the free web version.
+- `_config.yml` keeps the iOS project, tooling and this file off GitHub Pages; add new non-web files to it.
 - Keep financial data on the device for free users. Never send it anywhere that isn't listed in the privacy policy.
 
 ## Quality bar
@@ -21,5 +22,5 @@ The founder is not a full-time developer. Before running a command that installs
 - Write tests for every money calculation: balances, budgets, safe-to-spend, goals, transfers.
 - Test statement import with sample CSV and PDF files from major Australian banks.
 - Make small, focused commits with clear messages.
-- Before calling a feature done, run it in the iOS Simulator and say what you checked.
+- Before calling a change done, test it on the web and on the founder's iPhone, and say what was checked. Claude can't run the phone: give the founder a short check list and wait for their confirmation.
 - Never mark a release ready while a P0 or P1 bug is open.
