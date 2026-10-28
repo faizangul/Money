@@ -244,10 +244,10 @@ function restoreBlock(){
 function card(){
   const unsaved=meta.changes||0;
   return `<section class="card"><div class="head"><h2>Backup</h2><span class="small muted">Last backup ${ago(meta.lastBackup)}</span></div>
-    <p class="small muted" style="margin:0 0 10px">Your data is stored only on this phone${unsaved?`, with ${unsaved} change${unsaved===1?"":"s"} since the last backup`:""}. Back up now opens your share sheet: choose <b>Save to Files → iCloud Drive</b> on iPhone, or <b>Drive</b> on Android. The app reminds you weekly, or sooner after lots of changes.</p>
+    <p class="small muted" style="margin:0 0 10px">Your data is stored only on this phone${unsaved?`, with ${unsaved} change${unsaved===1?"":"s"} since the last backup`:""}. Back up now opens your share sheet: choose <b>Save to Files → iCloud Drive</b>${NATIVE?"":" on iPhone, or <b>Drive</b> on Android"}. The app reminds you weekly, or sooner after lots of changes.</p>
     ${msg?`<p class="small" role="status" style="margin:0 0 10px;font-weight:600">${msg}</p>`:""}
     <div class="btnrow" style="position:relative"><button class="btn primary" data-act="mtbackup">Back up now</button>${restoreBlock()}</div>
-    ${storageOk?"":`<p class="err" style="margin:10px 0 0">This browser is blocking storage, so nothing will be kept. Open the app from your Home Screen instead.</p>`}</section>
+    ${storageOk?"":`<p class="err" style="margin:10px 0 0">${NATIVE?"Couldn't open this phone's storage, so nothing will be kept. Close Money Tracker fully and open it again.":"This browser is blocking storage, so nothing will be kept. Open the app from your Home Screen instead."}</p>`}</section>
   <section class="card"><div class="head"><h2>Start over</h2></div>
     ${wipeAsk?`<div class="notice" style="background:var(--neg-soft);color:var(--neg);display:flex;flex-direction:column;gap:10px">
       <span><b>Erase everything on this phone?</b> All ${countTx(store)} transactions, your accounts, budgets and settings will be deleted. This can't be undone unless you have a backup.</span>
@@ -263,7 +263,7 @@ function nudge(){
   const fresh=!meta.lastBackup&&meta.first&&Date.now()-meta.first<3*864e5;
   const due=!fresh&&((since>7*864e5&&ch>0)||(ch>=25&&since>864e5));
   if(!due)return"";
-  return `<div class="notice" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between"><span style="flex:1 1 200px"><b>${ch} change${ch===1?"":"s"} not backed up.</b> Last backup ${ago(meta.lastBackup)}. Save a copy to iCloud Drive or Google Drive so a lost phone doesn't mean lost data.</span><span style="display:flex;gap:8px"><button class="btn sm primary" data-act="mtbackup">Back up</button><button class="btn sm" data-act="mtlater">Later</button></span></div>`;
+  return `<div class="notice" style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between"><span style="flex:1 1 200px"><b>${ch} change${ch===1?"":"s"} not backed up.</b> Last backup ${ago(meta.lastBackup)}. Save a copy to iCloud Drive${NATIVE?"":" or Google Drive"} so a lost phone doesn't mean lost data.</span><span style="display:flex;gap:8px"><button class="btn sm primary" data-act="mtbackup">Back up</button><button class="btn sm" data-act="mtlater">Later</button></span></div>`;
 }
 function firstRun(){
   return `<div class="btnrow" style="justify-content:center;position:relative;margin-top:-4px"><span class="small muted" style="align-self:center">Have a backup file?</span>${restoreBlock()}</div>${msg?`<p class="small" style="font-weight:600">${msg}</p>`:""}`;

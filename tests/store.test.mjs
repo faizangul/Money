@@ -374,3 +374,18 @@ test("iOS: closing the share sheet is reported as cancelled, other failures as u
   disk.shareResult = "write_failed";
   await assert.rejects(dl.save({ filename: "b.json", data: "{}" }), { code: "unavailable" });
 });
+
+test("iOS: the backup card and reminder never mention other platforms or the web version", async () => {
+  const OTHER = /android|google|browser|home screen|web|safari|chrome|github/i;
+  const disk = fakeSqlite();
+  disk.docs.set("app/config", JSON.stringify({ accounts: [], categories: [] }));
+  disk.kv.set("meta", JSON.stringify({ changes: 30, lastBackup: Date.now() - 10 * 864e5 }));
+  const app = launch({ disk });
+  await app.use("db");
+  const nudge = app.window.__mt.nudge();
+  assert.match(nudge, /not backed up/);
+  assert.doesNotMatch(app.window.__mt.card() + nudge, OTHER);
+  const web = launch({ localStorage: fakeLocalStorage({ "mt.store.v1": JSON.stringify({ "app/config": {} }) }) });
+  await web.use("db");
+  assert.match(web.window.__mt.card(), /Android/);
+});
