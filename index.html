@@ -77,6 +77,13 @@ const bio={
   available:()=>NATIVE?CAP.nativePromise("Biometric","available",{}).catch(()=>NOBIO):Promise.resolve(NOBIO),
   authenticate:(reason,state)=>NATIVE?CAP.nativePromise("Biometric","authenticate",state?{reason,state}:{reason}).catch(()=>({ok:false,reason:"failed"})):Promise.resolve({ok:false,reason:"unavailable"})
 };
+/* local notifications, iOS app only (null in a browser, which keeps the calendar-file alerts) */
+const notify=NATIVE?{
+  status:()=>CAP.nativePromise("Notify","status",{}).then(r=>r.status).catch(()=>"unavailable"),
+  request:()=>CAP.nativePromise("Notify","request",{}).then(r=>r.status).catch(()=>"unavailable"),
+  schedule:plan=>CAP.nativePromise("Notify","schedule",plan),
+  openSettings:()=>CAP.nativePromise("Notify","openSettings",{})
+}:null;
 let ready;
 if(NATIVE)ready=loadNative();
 else{
@@ -229,7 +236,7 @@ document.addEventListener("click",async e=>{
 });
 document.addEventListener("change",e=>{if(e.target.id==="mtfile"&&e.target.files&&e.target.files[0]){readFile(e.target.files[0]);e.target.value=""}});
 
-window.__mt={card,nudge,firstRun,eraseAll,secret,bio,ready:secretsReady};
+window.__mt={card,nudge,firstRun,eraseAll,secret,bio,notify,ready:secretsReady};
 /* the database waits for the PIN settings, so the lock screen is up before any data shows */
 window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n==="downloads"?downloads:null};
 if("serviceWorker" in navigator&&location.protocol==="https:"){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))}
@@ -1517,6 +1524,48 @@ function buildIcs(cfg){
   return {text:L.map(icsFold).join("\r\n")+"\r\n",n};
 }
 
+/* ---------- phone notifications (iOS app) ---------- */
+/* The same reminders as the calendar alerts, as one-off notifications for the next 60 days (the daily
+   check-in repeats by itself). iOS keeps at most 64 waiting, so only the soonest are kept; the list is
+   rebuilt whenever the app opens or settings are saved. hide leaves amounts off the lock screen. */
+function reminderPlan(cfg,t,hm,hide){
+  const items=[],end=addDays(t,60),now=t+"T"+hm;
+  const add=(id,date,time,title,body)=>{const at=date+"T"+(time||"09:00");if(at>now&&date<=end)items.push({id,title,body,at})};
+  for(const r of cfg.recurring||[]){
+    const rm=r.remind||{};if(!rm.on||!r.anchor)continue;
+    const before=+rm.before||0,when=before?(before===1?"tomorrow":`in ${before} days`):"today";
+    const amt=r.amount&&!hide?" ("+money(r.amount)+")":"",verb=r.type==="Income"?"lands":"is due";
+    for(let k=0;k<3000;k++){const d=occAt(r,k);if(addDays(d,-before)>end)break;if(d<t||(r.skipped||[]).includes(d))continue;
+      add(`${r.id}@${d}`,addDays(d,-before),rm.time,`${r.desc}${amt} ${verb} ${when}`,"Open Money Tracker to log it when it happens.")}
+  }
+  const nd=cfg.nudges||{},pay=(cfg.recurring||[]).find(r=>r.pay);
+  if(nd.payCal&&pay&&pay.anchor)for(let k=0;k<3000;k++){const d=occAt(pay,k);if(d>end)break;if(d<t)continue;
+    add(`payday@${d}`,d,nd.payTime||"18:00","Payday: set money aside for your goals","Open Money Tracker and tick off this pay's goal transfers.")}
+  for(const a of cfg.accounts||[]){if(a.kind!=="credit"||!+a.dueDay||!a.remindDue)continue;
+    for(let m=0;m<4;m++){const due=dayIn(shiftMonth(ym(t),m),+a.dueDay);
+      add(`due-${a.name}@${due}`,addDays(due,-2),"09:00",`${a.name} payment due in 2 days`,"Pay the full balance by the due date to avoid interest.")}}
+  items.sort((a,b)=>a.at<b.at?-1:a.at>b.at?1:0);
+  const daily=nd.cal?{id:"daily-checkin",title:"Add today's spending",body:"Open Money Tracker and log anything you bought today.",time:nd.calTime||"20:00"}:null;
+  return {items:items.slice(0,daily?59:60),daily};
+}
+const NOTIFY=window.__mt&&window.__mt.notify;
+let NOTIF="unavailable",remT=0;
+/* sends the saved settings' reminders to the phone; sample data (demo) never schedules anything */
+function syncReminders(){if(!NOTIFY)return;clearTimeout(remT);remT=setTimeout(async()=>{
+  if(S.demo)return;const ask=S.remAsk;S.remAsk=false;
+  const plan=S.cfg?reminderPlan(S.cfg,today(),new Date().toTimeString().slice(0,5),!!pinCfg()):{items:[],daily:null};
+  let st=await NOTIFY.status();
+  if(st==="notDetermined"&&ask&&(plan.items.length||plan.daily))st=await NOTIFY.request();
+  const changed=st!==NOTIF;NOTIF=st;
+  if(st==="granted"||st==="provisional")try{await NOTIFY.schedule(plan)}catch(e){console.error("Couldn't schedule reminders",e)}
+  if(changed&&S.view==="settings")render()},300)}
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)syncReminders()});
+function notifHead(){
+  const st=NOTIF==="denied"?`<div class="notice" style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin:0 0 8px"><span>Notifications are turned off for Money Tracker.</span><button class="btn sm" data-act="notifsettings">Open iPhone Settings</button></div>`
+    :NOTIF==="notDetermined"?`<p style="margin:0 0 8px"><button class="btn sm primary" data-act="notifallow">Allow notifications</button></p>`:"";
+  return `<h3 class="eyebrow" style="margin:16px 0 4px">Phone notifications</h3>
+    <p class="small muted" style="margin:0 0 6px">Money Tracker sends these as notifications, even when the app is closed. Changes apply when you save.${pinCfg()?" Amounts are left off while the PIN lock is on.":""}</p>${st}`}
+
 /* ---------- rendering ---------- */
 let raf=0;
 function render(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;draw()})}
@@ -1821,7 +1870,8 @@ const PINK="mt.pin",SECRET=window.__mt&&window.__mt.secret;
 const secGet=k=>{if(SECRET)return SECRET.get(k);try{return localStorage.getItem(k)}catch(e){return null}};
 const secSet=(k,v)=>{if(SECRET)return SECRET.set(k,v);try{v==null?localStorage.removeItem(k):localStorage.setItem(k,v)}catch(e){return Promise.reject(e)}return Promise.resolve()};
 function pinCfg(){try{return JSON.parse(secGet(PINK)||"null")}catch(e){return null}}
-const pinSave=c=>secSet(PINK,c?JSON.stringify(c):null);
+/* reminders are rescheduled after, since amounts are hidden from the lock screen while a PIN is set */
+const pinSave=c=>secSet(PINK,c?JSON.stringify(c):null).then(()=>syncReminders());
 /* Face ID / Touch ID unlock, saved with the PIN as c.bio plus c.bioState (which faces were enrolled when it
    was turned on). If the enrolled faces change, it switches off and the PIN is needed. */
 const BIOAPI=window.__mt&&window.__mt.bio;
@@ -2882,7 +2932,7 @@ function subscribe(db){
     S._resubN=(S._resubN||0)+1;if(S._resubN>5){S.state="error";render();return}
     clearTimeout(S._resub);S._resub=setTimeout(()=>{if(S.db===db)subscribe(db)},1500*S._resubN+Math.random()*1000)};
   S.unsubs=[
-    db.doc("app/config").onSnapshot(s=>{S.cfg=s.exists?s.data():null;if(S.cfg&&!S.draft&&!S.demo){const sd=LS.get("mt.sdraft");if(sd){S.draft=sd;S.draftDirty=true}}if(S.cfg&&!S.draft){setCurrency(S.cfg.currency);if(S.cfg.appearance&&!S.demo)applyLook(S.cfg.appearance)}got.c=true;ready();if(F)drawSheet()},fail),
+    db.doc("app/config").onSnapshot(s=>{S.cfg=s.exists?s.data():null;if(S.cfg&&!S.draft&&!S.demo){const sd=LS.get("mt.sdraft");if(sd){S.draft=sd;S.draftDirty=true}}if(S.cfg&&!S.draft){setCurrency(S.cfg.currency);if(S.cfg.appearance&&!S.demo)applyLook(S.cfg.appearance)}got.c=true;ready();syncReminders();if(F)drawSheet()},fail),
     db.collection("tx").onSnapshot(s=>{S.tx=s.docs.map(d=>({id:d.id,...d.data()}));got.t=true;ready()},fail),
     db.collection("props").onSnapshot(s=>{S.props=s.docs.map(d=>({id:d.id,...d.data()}));render()},fail)];
 }
@@ -3105,8 +3155,8 @@ function vSettings(){
      <label class="row" for="nd2" style="cursor:pointer"><div class="main"><div class="t">Budget warnings</div><div class="s">When a category reaches</div></div>
       <select id="nd3" data-s="nudges.threshold" aria-label="Warning level" style="border:1px solid var(--line);background:var(--sunk);border-radius:8px;padding:5px 6px">${[75,80,90,95].map(v=>`<option value="${v}"${+nd.threshold===v?" selected":""}>${v}%</option>`).join("")}</select>
       <input type="checkbox" id="nd2" data-s="nudges.budget" ${nd.budget?"checked":""}></label></div>
-    <h3 class="eyebrow" style="margin:16px 0 4px">Phone calendar alerts</h3>
-    <p class="small muted" style="margin:0 0 6px">Add alerts to your phone's Calendar. They work even when the app is closed.</p>
+    ${NOTIFY?notifHead():`<h3 class="eyebrow" style="margin:16px 0 4px">Phone calendar alerts</h3>
+    <p class="small muted" style="margin:0 0 6px">Add alerts to your phone's Calendar. They work even when the app is closed.</p>`}
     <div>
      <div class="remrow"><label for="ndc" style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="ndc" data-s="nudges.cal" ${nd.cal?"checked":""}><span><b>Daily check-in</b><br><span class="small muted">Every day</span></span></label>
       <input class="inp" type="time" id="ndct" data-s="nudges.calTime" value="${nd.calTime||"20:00"}" aria-label="Time" style="width:auto"></div>
@@ -3116,8 +3166,8 @@ function vSettings(){
       ${r.remind.on?`<div class="opts"><select class="inp" id="rrb${i}" data-s="recurring.${i}.remind.before" aria-label="When">${[[0,"On the day"],[1,"1 day before"],[2,"2 days before"],[3,"3 days before"]].map(([v,l])=>`<option value="${v}"${+r.remind.before===v?" selected":""}>${l}</option>`).join("")}</select>
        <input class="inp" type="time" id="rrt${i}" data-s="recurring.${i}.remind.time" value="${r.remind.time||"09:00"}" aria-label="Time"></div>`:""}</div>`).join("")}
     </div>
-    <p style="margin:12px 0 0"><button class="btn" data-act="ics">Add alerts to Calendar</button></p>
-    <p class="small muted" style="margin:8px 0 0">Changing these? Delete the old events in Calendar first.</p></section>`;
+    ${NOTIFY?"":`<p style="margin:12px 0 0"><button class="btn" data-act="ics">Add alerts to Calendar</button></p>
+    <p class="small muted" style="margin:8px 0 0">Changing these? Delete the old events in Calendar first.</p>`}</section>`;
   const FL=(label,id,inner)=>`<div class="field"><label for="${id}">${label}</label>${inner}</div>`;
   const pad=`padding-left:${16+String(sym()).length*9}px`;
   const MONEY=(id,path,val,step)=>`<div class="money"><span>${esc(sym())}</span><input class="inp" style="${pad}" type="number" inputmode="decimal" step="${step||"0.01"}" id="${id}" data-s="${path}" value="${+val?val:""}"></div>`;
@@ -3135,7 +3185,7 @@ function vSettings(){
        ${card?FL("Owed at start","aco"+i,MONEYN("aco"+i,`accounts.${i}.opening`,-(+a.opening||0))):FL(inv?"Put in at start":"Balance at start","aco"+i,MONEY("aco"+i,`accounts.${i}.opening`,a.opening))}</div>
       ${card?`<div class="two">${FL("Credit limit","acl"+i,MONEY("acl"+i,`accounts.${i}.limit`,a.limit||0,"1"))}${FL("Due day of month","acd"+i,`<input class="inp" type="number" inputmode="numeric" min="1" max="31" step="1" id="acd${i}" data-s="accounts.${i}.dueDay" value="${a.dueDay||""}" placeholder="e.g. 15">`)}</div>
        <div class="two">${FL("Interest % a year","acr"+i,`<input class="inp" type="number" inputmode="decimal" step="0.01" id="acr${i}" data-s="accounts.${i}.rate" value="${a.rate||""}" placeholder="e.g. 20.99">`)}${FL("Pay it from","acp"+i,SEL("acp"+i,`accounts.${i}.payFrom`,`<option value="">Main account</option>`+d.accounts.filter(x=>x.kind!=="credit"&&x.kind!=="investment").map(x=>`<option${x.name===a.payFrom?" selected":""}>${esc(x.name)}</option>`).join("")))}</div>
-       <label class="check" for="acrm${i}"><input type="checkbox" id="acrm${i}" data-s="accounts.${i}.remindDue" ${a.remindDue?"checked":""}> Add a phone calendar alert 2 days before it's due</label>`
+       <label class="check" for="acrm${i}"><input type="checkbox" id="acrm${i}" data-s="accounts.${i}.remindDue" ${a.remindDue?"checked":""}>${NOTIFY?" Remind me 2 days before it's due":" Add a phone calendar alert 2 days before it's due"}</label>`
       :a.kind==="super"?`<div class="two">${FL("Employer adds","acsm"+i,SEL("acsm"+i,`accounts.${i}.sgMode`,[["pct","% of pay I log"],["fixed","Set amount per pay"],["off","Don't estimate"]].map(([k,l])=>`<option value="${k}"${(a.sgMode||"pct")===k?" selected":""}>${l}</option>`).join("")))}
         ${(a.sgMode||"pct")==="pct"?FL("Rate %","acsr"+i,`<input class="inp" type="number" inputmode="decimal" step="0.5" min="0" id="acsr${i}" data-s="accounts.${i}.sgRate" value="${superRate(a)}">`):(a.sgMode==="fixed"?FL("Per pay","acsa"+i,MONEY("acsa"+i,`accounts.${i}.sgAmt`,a.sgAmt)):"<span></span>")}</div>
        ${(a.sgMode||"pct")!=="off"?`<div class="two">${FL("On this pay","acsc"+i,SEL("acsc"+i,`accounts.${i}.sgCat`,`<option value="">My pay</option>`+catOpts(a.sgCat,"Income")))}<p class="small muted" style="margin:0 0 6px">${(a.sgMode||"pct")==="pct"?(AU()?"12% is the legal minimum. Logging take-home pay makes this a little low.":"Use the rate your employer adds, if any."):"Copy the super amount from your payslip, plus any salary sacrifice."}</p></div>`:""}`
@@ -3995,7 +4045,7 @@ document.addEventListener("click",async e=>{
     case "sdel":S.draft[a.dataset.k].splice(+a.dataset.i,1);markDraft();render();break;
     case "sess":{const c=S.draft.categories[+a.dataset.i];if(c){c.essential=!c.essential;markDraft();render()}break}
     case "sreset":clearDraft();setCurrency(S.cfg.currency);applyLook(S.cfg.appearance||S.look);render();toast("Changes discarded");break;
-    case "ssave":{S.draft.categories=S.draft.categories.filter(c=>(c.name||"").trim()||c.role);S.draft.loans=(S.draft.loans||[]).filter(l=>(l.name||"").trim()||+l.balance);const d=S.draft,names=d.accounts.map(x=>x.name.trim()),cn=d.categories.map(x=>x.name.trim());
+    case "ssave":{S.remAsk=true;S.draft.categories=S.draft.categories.filter(c=>(c.name||"").trim()||c.role);S.draft.loans=(S.draft.loans||[]).filter(l=>(l.name||"").trim()||+l.balance);const d=S.draft,names=d.accounts.map(x=>x.name.trim()),cn=d.categories.map(x=>x.name.trim());
       const er=$("#serr");
       d.categories=d.categories.filter(c=>(c.name||"").trim()||c.role);
       const badX=d.recurring.find(r=>r.type==="Transfer"&&(!r.to||r.to===r.account));
@@ -4095,6 +4145,8 @@ document.addEventListener("click",async e=>{
     case "pinoff":pinShow("off");break;
     case "pinchange":pinShow("change");break;
     case "bioon":bioEnable();break;
+    case "notifallow":if(NOTIFY)NOTIFY.request().then(st=>{NOTIF=st;syncReminders();render()});break;
+    case "notifsettings":if(NOTIFY)NOTIFY.openSettings();break;
     case "biooff":bioDisable();break;
     case "imcheckx":try{localStorage.setItem("mt.imcheckx",today())}catch(e){}render();break;
     case "imcardx":try{localStorage.setItem("mt.imcardx","1")}catch(e){}render();break;
