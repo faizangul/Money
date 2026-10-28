@@ -48,10 +48,12 @@ async function fakeKeychain(disk, method, o) {
   throw new Error("unknown method " + method);
 }
 
-function launch({ disk = null, localStorage = fakeLocalStorage() } = {}) {
+// claude: a stand-in for Claude's own window.claude, there before the app's scripts run.
+function launch({ disk = null, localStorage = fakeLocalStorage(), claude = null } = {}) {
   const document = { addEventListener() {}, createElement() { return {}; }, body: {} };
   const window = { addEventListener() {}, scrollTo() {} };
   if (disk) window.Capacitor = { isNativePlatform: () => true, nativePromise: disk.call };
+  if (claude) window.claude = claude;
   const ctx = { window, document, localStorage, navigator: {}, location: { protocol: "capacitor:" }, console, setTimeout, clearTimeout, Promise, JSON, Date, Math, Object, String, Blob: class {}, File: class {}, URL };
   vm.createContext(ctx);
   vm.runInContext(storeScript, ctx);
@@ -185,6 +187,49 @@ test("browser: still uses localStorage and survives a reload", async () => {
   assert.deepEqual(JSON.parse(ls.getItem("mt.store.v1")), { "tx/t": { amt: 3.3 } });
   db = await launch({ localStorage: ls }).use("db");
   assert.deepEqual((await db.doc("tx/t").get()).data(), { amt: 3.3 });
+});
+
+// Exactly what the live GitHub Pages version (main) saves today.
+const LIVE_STORE = JSON.stringify({
+  "app/config": { version: 1, currency: "AUD", accounts: [{ id: "a1", name: "Everyday", bal: 1520.05 }], categories: [] },
+  "tx/k1": { date: "2026-10-01", type: "expense", amt: 64.9, desc: "Coles", acct: "a1" },
+  "props/p1": { firm: "Test", size: 100000 },
+});
+const LIVE_META = JSON.stringify({ lastBackup: 1761600000000, changes: 3 });
+
+test("browser: data saved by the live web version loads unchanged and isn't rewritten", async () => {
+  const ls = fakeLocalStorage({ "mt.store.v1": LIVE_STORE, "mt.meta.v1": LIVE_META, "mt.look": '{"mode":"dark"}' });
+  const db = await launch({ localStorage: ls }).use("db");
+  const want = JSON.parse(LIVE_STORE);
+  assert.deepEqual((await db.doc("app/config").get()).data(), want["app/config"]);
+  assert.deepEqual((await db.collection("tx").get()).docs.map((d) => [d.id, d.data()]), [["k1", want["tx/k1"]]]);
+  assert.equal((await db.collection("props").get()).size, 1);
+  assert.equal(ls.getItem("mt.store.v1"), LIVE_STORE);
+  assert.equal(ls.getItem("mt.meta.v1"), LIVE_META);
+  assert.equal(ls.getItem("mt.look"), '{"mode":"dark"}');
+  assert.equal(ls.map.size, 3);
+});
+
+test("browser: a save that doesn't fit is undone and reported", async () => {
+  const ls = fakeLocalStorage({ "mt.store.v1": LIVE_STORE });
+  const db = await launch({ localStorage: ls }).use("db");
+  const setItem = ls.setItem;
+  ls.setItem = () => { throw new Error("QuotaExceededError"); };
+  await assert.rejects(db.doc("tx/k2").set({ amt: 1 }), { code: "quota_exceeded" });
+  ls.setItem = setItem;
+  assert.equal((await db.doc("tx/k2").get()).exists, false);
+  assert.equal(ls.getItem("mt.store.v1"), LIVE_STORE);
+});
+
+test("inside Claude: Claude's own storage is used and nothing is kept locally", async () => {
+  const claudeDb = { doc() {}, collection() {} };
+  const claude = { use: async (n) => (n === "db" ? claudeDb : null) };
+  const ls = fakeLocalStorage();
+  const app = launch({ localStorage: ls, claude });
+  assert.equal(app.window.claude, claude);
+  assert.equal(await app.use("db"), claudeDb);
+  assert.equal(app.window.__mt, undefined);
+  assert.equal(ls.map.size, 0);
 });
 
 const PIN = JSON.stringify({ h: "abc123", salt: "s1", after: 60 });

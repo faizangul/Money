@@ -21,6 +21,8 @@
    plus backup and restore through files. */
 (function(){
 "use strict";
+/* Inside Claude, window.claude is Claude's own storage: leave it, and everything below, alone */
+if(window.claude&&typeof window.claude.use==="function")return;
 const KEY="mt.store.v1",META="mt.meta.v1";
 let store={},meta={},storageOk=true;
 const CAP=window.Capacitor,NATIVE=!!(CAP&&CAP.isNativePlatform&&CAP.isNativePlatform()&&CAP.nativePromise);
@@ -29,22 +31,44 @@ const rows=s=>Object.keys(s).map(p=>({p,d:JSON.stringify(s[p])}));
 /* native calls run one after another, so saves land in the order they were made */
 let tail=Promise.resolve();
 const chain=f=>{const r=tail.then(f);tail=r.catch(()=>{});return r};
-async function loadNative(){
-  try{
-    const r=await sql("load"),s={};
+/* Storage backends. Both keep the whole store in memory; these calls make the saved copy match it.
+   load() resolves {store,meta,ok}; write, replaceAll and saveMeta reject if nothing was saved. */
+const lsSave=all=>{try{localStorage.setItem(KEY,JSON.stringify(all));return Promise.resolve()}catch(e){return Promise.reject({code:"quota_exceeded",message:"Phone storage is full"})}};
+/* web (GitHub Pages): localStorage under the same keys every earlier version used, so data carries over as it is */
+const webBackend={
+  async load(){
+    try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
+    let s={},m={},ok=true;
+    try{s=JSON.parse(localStorage.getItem(KEY)||"{}")||{}}catch(e){ok=false;s={}}
+    try{m=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){m={}}
+    return{store:s,meta:m,ok};
+  },
+  write:(p,next,all)=>lsSave(all),
+  replaceAll:lsSave,
+  saveMeta(m){try{localStorage.setItem(META,JSON.stringify(m))}catch(e){}return Promise.resolve()}
+};
+/* iOS app: SQLite through the native MoneyStore plugin */
+const iosBackend={
+  async load(){
+    const r=await sql("load"),s={};let m={};
     (r.docs||[]).forEach(x=>{s[x.p]=JSON.parse(x.d)});
-    store=s;try{meta=JSON.parse((r.values||{}).meta||"{}")||{}}catch(e){meta={}}
+    try{m=JSON.parse((r.values||{}).meta||"{}")||{}}catch(e){m={}}
     /* first launch on SQLite: move over anything an earlier build kept in localStorage */
     let old=null;try{old=JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){}
-    if(!Object.keys(store).length&&old&&typeof old==="object"&&Object.keys(old).length){
-      await sql("replaceAll",{docs:rows(old)});store=old;
-      try{meta=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){meta={}}
-      await saveMeta();
+    if(!Object.keys(s).length&&old&&typeof old==="object"&&Object.keys(old).length){
+      try{m=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){m={}}
+      await iosBackend.replaceAll(old);await iosBackend.saveMeta(m);
+      try{localStorage.removeItem(KEY);localStorage.removeItem(META)}catch(e){}
+      return{store:old,meta:m,ok:true};
     }
     try{localStorage.removeItem(KEY);localStorage.removeItem(META)}catch(e){}
-    return true;
-  }catch(e){console.error("MoneyStore load failed",e);storageOk=false;return false}
-}
+    return{store:s,meta:m,ok:true};
+  },
+  write:(p,next)=>chain(()=>sql("write",next===undefined?{dels:[p]}:{puts:[{p,d:JSON.stringify(next)}]})),
+  replaceAll:next=>chain(()=>sql("replaceAll",{docs:rows(next)})),
+  saveMeta:m=>chain(()=>sql("setValue",{k:"meta",v:JSON.stringify(m)}))
+};
+const backend=NATIVE?iosBackend:webBackend;
 /* small secrets (PIN lock): iOS Keychain in the app, localStorage in a browser. Loaded once at start
    so reads stay instant; an older build's localStorage copy moves into the Keychain once. */
 const SECRET_KEYS=["mt.pin","mt.pintries"],secrets={};
@@ -84,43 +108,25 @@ const notify=NATIVE?{
   schedule:plan=>CAP.nativePromise("Notify","schedule",plan),
   openSettings:()=>CAP.nativePromise("Notify","openSettings",{})
 }:null;
-let ready;
-if(NATIVE)ready=loadNative();
-else{
-  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
-  try{store=JSON.parse(localStorage.getItem(KEY)||"{}")||{}}catch(e){storageOk=false;store={}}
-  try{meta=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){meta={}}
-  ready=Promise.resolve(true);
-}
+const ready=backend.load().then(r=>{store=r.store;meta=r.meta;storageOk=r.ok;return true},
+  e=>{console.error("Storage load failed",e);storageOk=false;return false});
 
 const subs=new Set();
 let queued=0;
 function fire(){if(queued)return;queued=setTimeout(()=>{queued=0;subs.forEach(f=>{try{f()}catch(e){console.error(e)}})},0)}
-function persist(){try{localStorage.setItem(KEY,JSON.stringify(store));return true}catch(e){return false}}
-function saveMeta(){
-  if(NATIVE)return chain(()=>sql("setValue",{k:"meta",v:JSON.stringify(meta)})).catch(e=>console.error(e));
-  try{localStorage.setItem(META,JSON.stringify(meta))}catch(e){}return Promise.resolve();
-}
+function saveMeta(){return backend.saveMeta(meta).catch(e=>console.error(e))}
 /* swaps in a whole new store (restore, erase); resolves false if it couldn't be saved */
-async function replaceStore(next){
-  if(NATIVE){try{await chain(()=>sql("replaceAll",{docs:rows(next)}))}catch(e){return false}store=next;return true}
-  const prev=store;store=next;if(persist())return true;store=prev;return false;
-}
+async function replaceStore(next){try{await backend.replaceAll(next)}catch(e){return false}store=next;return true}
 function snap(p){const d=store[p];return{id:p.split("/").pop(),exists:!!d,data:()=>d,metadata:{fromCache:false,hasPendingWrites:false}}}
 function members(c){const n=c.split("/").length+1;return Object.keys(store).filter(k=>k.startsWith(c+"/")&&k.split("/").length===n).sort().map(snap)}
 function write(p,d){
   const prev=store[p],next=d===undefined?undefined:JSON.parse(JSON.stringify(d));
   const put=v=>{if(v===undefined)delete store[p];else store[p]=v};
-  const done=()=>{meta.changes=(meta.changes||0)+1;saveMeta();fire()};
   put(next);
-  if(!NATIVE){
-    if(!persist()){put(prev);return Promise.reject({code:"quota_exceeded",message:"Phone storage is full"})}
-    done();return Promise.resolve();
-  }
-  return chain(()=>sql("write",next===undefined?{dels:[p]}:{puts:[{p,d:JSON.stringify(next)}]})).then(done,e=>{
+  return backend.write(p,next,store).then(()=>{meta.changes=(meta.changes||0)+1;saveMeta();fire()},e=>{
     if(store[p]===next)put(prev);
-    console.error("MoneyStore write failed",e);
-    return Promise.reject({code:"unavailable",message:"Couldn't save on this phone"});
+    console.error("Save failed",e);
+    return Promise.reject(e&&e.code==="quota_exceeded"?e:{code:"unavailable",message:"Couldn't save on this phone"});
   });
 }
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
