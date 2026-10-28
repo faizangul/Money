@@ -17,28 +17,72 @@
 <script>
 /* On-device storage for the standalone Money Tracker.
    Provides the same small store interface the app uses (doc/collection, set/add/delete, onSnapshot),
-   kept in this phone's localStorage, plus backup and restore through files. */
+   kept in SQLite in the iOS app (native MoneyStore plugin) or in localStorage in a browser,
+   plus backup and restore through files. */
 (function(){
 "use strict";
 const KEY="mt.store.v1",META="mt.meta.v1";
 let store={},meta={},storageOk=true;
-try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
-try{store=JSON.parse(localStorage.getItem(KEY)||"{}")||{}}catch(e){storageOk=false;store={}}
-try{meta=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){meta={}}
-try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
+const CAP=window.Capacitor,NATIVE=!!(CAP&&CAP.isNativePlatform&&CAP.isNativePlatform()&&CAP.nativePromise);
+const sql=(m,o)=>CAP.nativePromise("MoneyStore",m,o||{});
+const rows=s=>Object.keys(s).map(p=>({p,d:JSON.stringify(s[p])}));
+/* native calls run one after another, so saves land in the order they were made */
+let tail=Promise.resolve();
+const chain=f=>{const r=tail.then(f);tail=r.catch(()=>{});return r};
+async function loadNative(){
+  try{
+    const r=await sql("load"),s={};
+    (r.docs||[]).forEach(x=>{s[x.p]=JSON.parse(x.d)});
+    store=s;try{meta=JSON.parse((r.values||{}).meta||"{}")||{}}catch(e){meta={}}
+    /* first launch on SQLite: move over anything an earlier build kept in localStorage */
+    let old=null;try{old=JSON.parse(localStorage.getItem(KEY)||"null")}catch(e){}
+    if(!Object.keys(store).length&&old&&typeof old==="object"&&Object.keys(old).length){
+      await sql("replaceAll",{docs:rows(old)});store=old;
+      try{meta=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){meta={}}
+      await saveMeta();
+    }
+    try{localStorage.removeItem(KEY);localStorage.removeItem(META)}catch(e){}
+    return true;
+  }catch(e){console.error("MoneyStore load failed",e);storageOk=false;return false}
+}
+let ready;
+if(NATIVE)ready=loadNative();
+else{
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{})}catch(e){}
+  try{store=JSON.parse(localStorage.getItem(KEY)||"{}")||{}}catch(e){storageOk=false;store={}}
+  try{meta=JSON.parse(localStorage.getItem(META)||"{}")||{}}catch(e){meta={}}
+  ready=Promise.resolve(true);
+}
 
 const subs=new Set();
 let queued=0;
 function fire(){if(queued)return;queued=setTimeout(()=>{queued=0;subs.forEach(f=>{try{f()}catch(e){console.error(e)}})},0)}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(store));return true}catch(e){return false}}
-function saveMeta(){try{localStorage.setItem(META,JSON.stringify(meta))}catch(e){}}
+function saveMeta(){
+  if(NATIVE)return chain(()=>sql("setValue",{k:"meta",v:JSON.stringify(meta)})).catch(e=>console.error(e));
+  try{localStorage.setItem(META,JSON.stringify(meta))}catch(e){}return Promise.resolve();
+}
+/* swaps in a whole new store (restore, erase); resolves false if it couldn't be saved */
+async function replaceStore(next){
+  if(NATIVE){try{await chain(()=>sql("replaceAll",{docs:rows(next)}))}catch(e){return false}store=next;return true}
+  const prev=store;store=next;if(persist())return true;store=prev;return false;
+}
 function snap(p){const d=store[p];return{id:p.split("/").pop(),exists:!!d,data:()=>d,metadata:{fromCache:false,hasPendingWrites:false}}}
 function members(c){const n=c.split("/").length+1;return Object.keys(store).filter(k=>k.startsWith(c+"/")&&k.split("/").length===n).sort().map(snap)}
 function write(p,d){
-  const prev=store[p];
-  if(d===undefined)delete store[p];else store[p]=JSON.parse(JSON.stringify(d));
-  if(!persist()){if(prev===undefined)delete store[p];else store[p]=prev;return Promise.reject({code:"quota_exceeded",message:"Phone storage is full"})}
-  meta.changes=(meta.changes||0)+1;saveMeta();fire();return Promise.resolve();
+  const prev=store[p],next=d===undefined?undefined:JSON.parse(JSON.stringify(d));
+  const put=v=>{if(v===undefined)delete store[p];else store[p]=v};
+  const done=()=>{meta.changes=(meta.changes||0)+1;saveMeta();fire()};
+  put(next);
+  if(!NATIVE){
+    if(!persist()){put(prev);return Promise.reject({code:"quota_exceeded",message:"Phone storage is full"})}
+    done();return Promise.resolve();
+  }
+  return chain(()=>sql("write",next===undefined?{dels:[p]}:{puts:[{p,d:JSON.stringify(next)}]})).then(done,e=>{
+    if(store[p]===next)put(prev);
+    console.error("MoneyStore write failed",e);
+    return Promise.reject({code:"unavailable",message:"Couldn't save on this phone"});
+  });
 }
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 function docRef(p){return{id:p.split("/").pop(),path:p,
@@ -91,10 +135,10 @@ function readFile(file){
   r.onerror=()=>{msg="Couldn't read that file.";fire()};
   r.readAsText(file);
 }
-function applyRestore(){
-  if(!pending)return;
-  const prev=store;store=pending.store;
-  if(!persist()){store=prev;msg="Not enough space on this phone to restore.";pending=null;fire();return}
+async function applyRestore(){
+  if(!pending||busy)return;busy=true;
+  const ok=await replaceStore(pending.store);busy=false;
+  if(!ok){msg="Not enough space on this phone to restore.";pending=null;fire();return}
   meta.lastBackup=Date.now();meta.changes=0;saveMeta();
   msg=`Restored ${pending.n} transactions.`;pending=null;fire();
 }
@@ -126,7 +170,7 @@ function nudge(){
   if(!store["app/config"])return"";
   const ch=meta.changes||0,since=meta.lastBackup?Date.now()-meta.lastBackup:Infinity;
   if(meta.snooze&&Date.now()<meta.snooze)return"";
-  if(!meta.lastBackup&&ch>0&&!meta.first){meta.first=Date.now();try{localStorage.setItem("mt.meta.v1",JSON.stringify(meta))}catch(e){}}
+  if(!meta.lastBackup&&ch>0&&!meta.first){meta.first=Date.now();saveMeta()}
   const fresh=!meta.lastBackup&&meta.first&&Date.now()-meta.first<3*864e5;
   const due=!fresh&&((since>7*864e5&&ch>0)||(ch>=25&&since>864e5));
   if(!due)return"";
@@ -135,7 +179,9 @@ function nudge(){
 function firstRun(){
   return `<div class="btnrow" style="justify-content:center;position:relative;margin-top:-4px"><span class="small muted" style="align-self:center">Have a backup file?</span>${restoreBlock()}</div>${msg?`<p class="small" style="font-weight:600">${msg}</p>`:""}`;
 }
-document.addEventListener("click",e=>{
+/* deletes every document and the backup counters (Erase all data, Forgot PIN) */
+async function eraseAll(){if(!await replaceStore({}))return false;meta={};await saveMeta();return true}
+document.addEventListener("click",async e=>{
   const a=e.target.closest("[data-act]");if(!a)return;
   if(a.dataset.act==="mtbackup")backup();
   if(a.dataset.act==="mtlater"){meta.snooze=Date.now()+2*864e5;saveMeta();fire()}
@@ -144,16 +190,15 @@ document.addEventListener("click",e=>{
   if(a.dataset.act==="mtwipe"){wipeAsk=true;msg="";fire()}
   if(a.dataset.act==="mtwipeno"){wipeAsk=false;fire()}
   if(a.dataset.act==="mtwipeyes"){
-    const prev=store;store={};
-    if(!persist()){store=prev;msg="Couldn't erase. Try again.";wipeAsk=false;fire();return}
-    meta={};saveMeta();try{["mt.nd","mt.sdraft","mt.txdraft","mt.setupdraft","mt.storydraft"].forEach(k=>localStorage.removeItem(k));localStorage.setItem("mt.view","home")}catch(err){}
+    if(!await eraseAll()){msg="Couldn't erase. Try again.";wipeAsk=false;fire();return}
+    try{["mt.nd","mt.sdraft","mt.txdraft","mt.setupdraft","mt.storydraft"].forEach(k=>localStorage.removeItem(k));localStorage.setItem("mt.view","home")}catch(err){}
     wipeAsk=false;msg="";pending=null;fire();window.scrollTo(0,0);
   }
 });
 document.addEventListener("change",e=>{if(e.target.id==="mtfile"&&e.target.files&&e.target.files[0]){readFile(e.target.files[0]);e.target.value=""}});
 
-window.__mt={card,nudge,firstRun};
-window.claude={use:async n=>n==="db"?db:n==="downloads"?downloads:null};
+window.__mt={card,nudge,firstRun,eraseAll};
+window.claude={use:async n=>n==="db"?(await ready?db:null):n==="downloads"?downloads:null};
 if("serviceWorker" in navigator&&location.protocol==="https:"){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))}
 })();
 </script>
@@ -1456,7 +1501,7 @@ function draw(){syncRegion();
   const app=$("#app");
   if(S.state==="loading"){app.innerHTML=`<div class="card empty"><h2>Loading your money</h2><p class="muted">Balances, this month's spending and upcoming bills appear here once your data loads.</p></div><div class="skeleton"></div>`;return}
   if(S.state==="error"){app.innerHTML=`<div class="card empty"><h2>Can't reach your data right now</h2><p class="muted">Nothing is lost. Check your connection, then try again.</p><p><button class="btn primary" data-act="retryload">Try again</button></p></div>`;return}
-  if(S.state==="nodb"){app.innerHTML=`<div class="card empty"><h2>Your tracker lives in Claude</h2><p class="muted">Open this page in Claude while signed in as its owner to see and add your transactions. Your data is private to you.</p></div>`;return}
+  if(S.state==="nodb"){app.innerHTML=`<div class="card empty"><h2>Couldn't open your data</h2><p class="muted">Money Tracker couldn't read its storage on this device. Close the app fully and open it again. Your data hasn't been deleted.</p></div>`;return}
   if(!S.cfg){app.innerHTML=vWelcome();return}
   const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct}[S.view]||vHome;
   const vkey=[S.view,S.view==="insights"?S.itab:"",S.acct||"",S.sset||""].join("|"),mkey=vkey+"|"+S.month,prevTab=S._vkey&&S._vkey.split("|")[0]===S.view&&S.view==="insights"?S._vkey.split("|")[1]:null;
@@ -1781,7 +1826,7 @@ document.addEventListener("click",async e=>{const b=e.target.closest&&e.target.c
   if(/^\d$/.test(k))return pinKey(k);if(k==="del")return pinKey("del");
   if(k==="cancel"){pinHide();return}if(k==="forgot"){PL.forgot=true;PL.armed=false;return pinDraw()}if(k==="back"){PL.forgot=false;return pinDraw()}
   if(k==="remove"){try{localStorage.removeItem(PINK)}catch(x){}pinHide();toast("PIN removed");render();return}
-  if(k==="erase"){if(!PL.armed){PL.armed=true;return pinDraw()}try{Object.keys(localStorage).filter(x=>/^mt\./.test(x)).forEach(x=>localStorage.removeItem(x))}catch(x){}location.reload()}});
+  if(k==="erase"){if(!PL.armed){PL.armed=true;return pinDraw()}if(window.__mt&&!await window.__mt.eraseAll()){toast("Couldn't erase. Try again.");return}try{Object.keys(localStorage).filter(x=>/^mt\./.test(x)).forEach(x=>localStorage.removeItem(x))}catch(x){}location.reload()}});
 document.addEventListener("keydown",e=>{if(!PL||PL.forgot)return;if(/^\d$/.test(e.key)){e.preventDefault();pinKey(e.key)}else if(e.key==="Backspace"){e.preventDefault();pinKey("del")}else if(e.key==="Escape"&&PL.mode!=="unlock"){pinHide()}},true);
 let pinAway=0;
 document.addEventListener("visibilitychange",()=>{const c=pinCfg();if(!c)return;if(document.hidden){pinAway=Date.now();if(!(c.after>0)&&!PL)pinShow("unlock")}

@@ -5,7 +5,8 @@
   "scripts": {
     "build:web": "node scripts/build-web.mjs",
     "sync": "npm run build:web && cap sync ios",
-    "open:ios": "cap open ios"
+    "open:ios": "cap open ios",
+    "test": "node --test \"tests/*.test.mjs\""
   },
   "repository": {
     "type": "git",
