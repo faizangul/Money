@@ -3151,14 +3151,14 @@ function vSettings(){
   h+=`<section class="card"><div class="head"><h2>Reminders</h2></div>
     <p class="small muted" style="margin:-4px 0 6px">Shown on Home when you open the app.</p>
     <div class="rows">
-     <label class="row" for="nd1" style="cursor:pointer"><div class="main"><div class="t">Daily check-in</div><div class="s">After 5pm, if nothing's logged for today</div></div><input type="checkbox" id="nd1" data-s="nudges.daily" ${nd.daily?"checked":""}></label>
+     <label class="row" for="nd1" style="cursor:pointer"><div class="main"><div class="t">Daily check-in on Home</div><div class="s">After 5pm, if nothing's logged for today</div></div><input type="checkbox" id="nd1" data-s="nudges.daily" ${nd.daily?"checked":""}></label>
      <label class="row" for="nd2" style="cursor:pointer"><div class="main"><div class="t">Budget warnings</div><div class="s">When a category reaches</div></div>
       <select id="nd3" data-s="nudges.threshold" aria-label="Warning level" style="border:1px solid var(--line);background:var(--sunk);border-radius:8px;padding:5px 6px">${[75,80,90,95].map(v=>`<option value="${v}"${+nd.threshold===v?" selected":""}>${v}%</option>`).join("")}</select>
       <input type="checkbox" id="nd2" data-s="nudges.budget" ${nd.budget?"checked":""}></label></div>
     ${NOTIFY?notifHead():`<h3 class="eyebrow" style="margin:16px 0 4px">Phone calendar alerts</h3>
     <p class="small muted" style="margin:0 0 6px">Add alerts to your phone's Calendar. They work even when the app is closed.</p>`}
     <div>
-     <div class="remrow"><label for="ndc" style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="ndc" data-s="nudges.cal" ${nd.cal?"checked":""}><span><b>Daily check-in</b><br><span class="small muted">Every day</span></span></label>
+     <div class="remrow"><label for="ndc" style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="ndc" data-s="nudges.cal" ${nd.cal?"checked":""}><span><b>Daily check-in</b><br><span class="small muted">${NOTIFY?"Notification every day":"Every day"}</span></span></label>
       <input class="inp" type="time" id="ndct" data-s="nudges.calTime" value="${nd.calTime||"20:00"}" aria-label="Time" style="width:auto"></div>
      ${d.recurring.some(r=>r.pay)?`<div class="remrow"><label for="ndp" style="display:flex;gap:10px;align-items:center;cursor:pointer"><input type="checkbox" id="ndp" data-s="nudges.payCal" ${nd.payCal?"checked":""}><span><b>Payday goals check</b><br><span class="small muted">On each payday</span></span></label>
       <input class="inp" type="time" id="ndpt" data-s="nudges.payTime" value="${nd.payTime||"18:00"}" aria-label="Time" style="width:auto"></div>`:""}
@@ -3273,7 +3273,7 @@ function vSettings(){
       ...(d.features.goals?[["goals","Goals",gN?`${gN} goal${pl(gN)}`:"None yet","goal"]]:[]),
       ...(d.features.loans?[["loans","Loans",lN?`${lN} loan${pl(lN)}`:"None yet","loan"]]:[])]],
     ["The app",[["you","Profile and look",[d.profile.name,(PALETTES.find(x=>x[0]===d.appearance.palette)||[,""])[1]].filter(Boolean).join(" · ")||"Name, currency, theme","user"],
-      ["reminders","Reminders",[d.nudges.daily?"Daily check-in":"",d.nudges.budget?`Budget warnings at ${d.nudges.threshold}%`:""].filter(Boolean).join(" · ")||"Off","bell"],
+      ["reminders","Reminders",[d.nudges.daily?"Daily check-in on Home":"",d.nudges.budget?`Budget warnings at ${d.nudges.threshold}%`:""].filter(Boolean).join(" · ")||"Off","bell"],
       ["track","What to track",`${fOn} of ${FEATS.length} turned on`,"tog"],
       ["methods","Money methods",(METHODS.find(x=>x[0]===d.method)||[,"None"])[1],"spark"]]]];
   const known=new Set(secs.flatMap(g=>g[1].map(x=>x[0])));
