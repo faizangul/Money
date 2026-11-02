@@ -456,6 +456,8 @@ main{display:flex;flex-direction:column;gap:14px}
 .chip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-size:14px;font-weight:500;white-space:nowrap}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .chip.ghost{background:var(--sunk);border-color:transparent}
+.chip.newcat{background:transparent;border-style:dashed;border-color:var(--accent);color:var(--accent);font-weight:600}
+.newcatrow{display:flex;gap:8px}.newcatrow .inp{flex:1;min-width:0}
 .chip.ghost[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 
 /* tab bar */
@@ -3122,7 +3124,7 @@ function subscribe(db){
     S._resubN=(S._resubN||0)+1;if(S._resubN>5){S.state="error";render();return}
     clearTimeout(S._resub);S._resub=setTimeout(()=>{if(S.db===db)subscribe(db)},1500*S._resubN+Math.random()*1000)};
   S.unsubs=[
-    db.doc("app/config").onSnapshot(s=>{S.cfg=s.exists?s.data():null;if(S.cfg&&!S.draft&&!S.demo){const sd=LS.get("mt.sdraft");if(sd){S.draft=sd;S.draftDirty=true}}if(S.cfg&&!S.draft){setCurrency(S.cfg.currency);if(S.cfg.appearance&&!S.demo)applyLook(S.cfg.appearance)}got.c=true;ready();syncReminders();if(F)drawSheet()},fail),
+    db.doc("app/config").onSnapshot(s=>{S.cfg=s.exists?s.data():null;if(S.cfg&&!S.draft&&!S.demo){const sd=LS.get("mt.sdraft");if(sd){S.draft=sd;S.draftDirty=true}}if(S.cfg&&!S.draft){setCurrency(S.cfg.currency);if(S.cfg.appearance&&!S.demo)applyLook(S.cfg.appearance)}got.c=true;ready();syncReminders();if(F){readForm();drawSheet()}},fail),
     db.collection("tx").onSnapshot(s=>{S.tx=s.docs.map(d=>({id:d.id,...d.data()}));got.t=true;ready()},fail),
     db.collection("props").onSnapshot(s=>{S.props=s.docs.map(d=>({id:d.id,...d.data()}));render()},fail)];
 }
@@ -3495,7 +3497,31 @@ function defaultAccount(){
   return (last&&last.account)||(accounts()[0]&&accounts()[0].name)||"";
 }
 function lastAccountFor(cat){const t=[...S.tx].filter(x=>x.category===cat).sort((a,b)=>(b.created||0)-(a.created||0))[0];return t&&accounts().some(a=>a.name===t.account)?t.account:null}
-function chipGroup(name,opts,sel,big){return `<div class="chips cwrap${big?" big":""}" role="group" aria-label="${name}">${opts.map(o=>`<button type="button" class="chip" data-f="${name}" data-v="${esc(o)}" aria-pressed="${o===sel}">${esc(o)}</button>`).join("")}</div>`}
+function chipGroup(name,opts,sel,big,extra){return `<div class="chips cwrap${big?" big":""}" role="group" aria-label="${name}">${opts.map(o=>`<button type="button" class="chip" data-f="${name}" data-v="${esc(o)}" aria-pressed="${o===sel}">${esc(o)}</button>`).join("")}${extra||""}</div>`}
+/* Step 2 of adding a transaction: pick a category or make one right here, with no trip to Settings */
+const RESERVED_CATS=new Set(["transfer","lending & ious"]);/* names saveTx gives transfers and IOUs */
+function newCatCheck(raw,kind,list){const name=String(raw??"").trim().replace(/\s+/g," ");
+  if(!name)return{err:"Type a name for the new category."};
+  const lo=name.toLowerCase(),hit=list.find(c=>String(c.name||"").trim().toLowerCase()===lo);
+  if(hit)return hit.kind===kind?{existing:hit.name}:{err:`“${hit.name}” is already ${hit.kind==="Income"?"an income":"a spending"} category. Try a different name.`};
+  if(RESERVED_CATS.has(lo))return{err:`“${name}” is kept for ${lo==="transfer"?"transfers":"IOUs"}. Try a different name.`};
+  return{name}}
+function catPicker(list){const naming=F.newCat!=null||!list.length,inc=F.type==="Income";
+  return (list.length?chipGroup("category",list,F.category,true,naming?"":`<button type="button" class="chip newcat" data-act="catnew">+ New category</button>`):"")+
+    (naming?`<div class="field"><label for="fnewcat">New ${inc?"income":"spending"} category</label><div class="newcatrow"><input class="inp" id="fnewcat" maxlength="40" autocomplete="off" autocapitalize="sentences" placeholder="${inc?"e.g. Side hustle":"e.g. Pets"}" value="${esc(F.newCat||"")}"><button type="submit" class="btn primary">Add</button></div>${list.length?`<button type="button" class="linkbtn" data-act="catnewx" style="align-self:flex-start">Cancel</button>`:""}</div>`:"")}
+const focusNewCat=()=>{const i=$("#fnewcat");if(i)i.focus()};
+async function addCatFromSheet(){readForm();const r=newCatCheck(F.newCat,F.type,cats());
+  if(r.err){F.err=r.err;drawSheet();focusNewCat();return}
+  const name=r.name||r.existing,f=F,typed=F.newCat;
+  /* move on straight away; the save finishes in the background and comes back here only if it fails */
+  Object.assign(F,{category:name,newCat:null,err:"",dup:null,dupOk:null,step:3});F.touched.category=true;drawSheet();
+  if(r.existing)return;
+  const doc={name,kind:f.type,essential:false,budget:0,role:""},c=JSON.parse(JSON.stringify(S.cfg));c.categories.push(doc);
+  try{await S.db.doc("app/config").set(c);
+    /* an unsaved Settings draft holds its own list: without this, saving that draft would remove the new category */
+    if(S.draft&&Array.isArray(S.draft.categories)&&!S.draft.categories.some(x=>x.name===name)){S.draft.categories.push(Object.assign({},doc));if(S.draftDirty)LS.set("mt.sdraft",S.draft)}
+    toast(`${name} added`)}
+  catch(e){if(F===f){Object.assign(F,{category:"",newCat:typed,step:2,err:dbMsg(e)});drawSheet()}else toast(dbMsg(e))}}
 let _stepPrev=null;function stepAnim(){const o=F&&$("#txform")?F:W&&$("#setupform")?W:null,cur=F&&!W?F.step:W?W.step:null;let r="";
   const key=(W?"w":"f")+":"+cur,open=!!$("#sheetHost .sheet");if(open&&_stepPrev&&_stepPrev[0]===key[0]&&_stepPrev!==key&&!RM()){r=+key.slice(2)>+_stepPrev.slice(2)?" fwd":" back"}_stepPrev=key;return r}
 function stepBar(n,of){return `<div class="steps" aria-label="Step ${n} of ${of}">${Array.from({length:of},(_,i)=>`<i class="${i<n?"on":""}"></i>`).join("")}</div>`}
@@ -3518,7 +3544,7 @@ function drawSheet(){
      ${freq.length?`<div class="field"><span class="lab">Or repeat a recent one</span><div class="chips cwrap">${freq.map((x,i)=>`<button type="button" class="chip ghost" data-act="quick" data-i="${i}">${esc(x.desc)}</button>`).join("")}</div></div>`:""}`;
   }else if(st===2){
     body=`<p class="stepq">${STEP2_Q[t]}</p>`;
-    if(catList.length)body+=chipGroup("category",catList,F.category,true);
+    if(t==="Income"||t==="Expense")body+=catPicker(catList);
     else if(t==="Transfer")body+=`<div class="field"><span class="lab">From</span>${chipGroup("account",accNames,F.account,true)}</div>
       <div class="field"><span class="lab">To</span>${chipGroup("to",toNames.filter(a=>a!==F.account),F.to,true)}</div>
       ${isSuper(accounts().find(x=>x.name===F.to))?`<p class="hint" style="margin:0">An extra contribution to your ${AU()?"super":"retirement account"}. It's not spending, but it's locked until retirement.${AU()?" Your employer's super is added automatically when you log your pay.":""}</p>`:""}
@@ -3546,7 +3572,7 @@ function drawSheet(){
   }
   const back=st>1?`<button type="button" class="btn" data-act="fback">Back</button>`:"";
   let foot;
-  if(st<3)foot=`<div class="btnrow">${back}${st===2&&catList.length?"":`<button type="submit" class="btn primary" style="flex:1">Next</button>`}</div>`;
+  if(st<3)foot=`<div class="btnrow">${back}${st===2&&(t==="Income"||t==="Expense")?"":`<button type="submit" class="btn primary" style="flex:1">Next</button>`}</div>`;
   else foot=`<div class="btnrow">${F.id?`<button type="button" class="btn danger${F.armed?" armed":""}" data-act="del">${F.armed?"Tap again to delete":"Delete"}</button>`:`${back}<button type="button" class="btn" data-act="saveagain">Save + another</button>`}
      <button type="submit" class="btn primary" style="flex:1">${F.id?"Save changes":"Save"}</button></div>`;
   const ff=F.fromFan;F.fromFan=false;
@@ -3572,8 +3598,12 @@ function stepErr(n){
   }
   return"";
 }
+/* a save runs one at a time: a second tap while the first is still writing is ignored, so nothing is logged twice */
+const saving=new Set();
+function once(key,fn){if(saving.has(key))return;saving.add(key);return (async()=>fn())().finally(()=>saving.delete(key))}
 function nextStep(){
-  readForm();const e=stepErr(F.step);if(e){F.err=e;return drawSheet()}
+  readForm();if(F.step===2&&(F.type==="Income"||F.type==="Expense")&&(F.newCat!=null||!cats().some(c=>c.kind===F.type)))return once("cat",addCatFromSheet);
+  const e=stepErr(F.step);if(e){F.err=e;return drawSheet()}
   F.err="";
   if(F.step===1)F.step=(F.ready&&!stepErr(2))?3:2;else F.step=3;
   drawSheet();
@@ -3581,7 +3611,7 @@ function nextStep(){
 function readForm(){
   const g=id=>{const e=$(id);return e?e.value:null};
   if($("#famt"))F.amount=g("#famt");if($("#fdesc"))F.desc=g("#fdesc");
-  if($("#fperson"))F.person=g("#fperson");if($("#fdate"))F.date=g("#fdate");if($("#ffx"))F.fxAmt=g("#ffx");
+  if($("#fperson"))F.person=g("#fperson");if($("#fdate"))F.date=g("#fdate");if($("#ffx"))F.fxAmt=g("#ffx");if($("#fnewcat"))F.newCat=g("#fnewcat");
 }
 function autofill(desc){
   if(F.id)return;
@@ -4194,7 +4224,7 @@ document.addEventListener("click",async e=>{
   if(wb&&W&&wb.closest("#setupform")){e.preventDefault();readSetup();if(wb.dataset.w)W[wb.dataset.w]=wb.dataset.v;else{const g=W[wb.dataset.wm];g[wb.dataset.v]=!g[wb.dataset.v]}W.err="";drawSetup();return}
   const fb=e.target.closest("[data-f]");
   if(fb&&F&&fb.closest("#txform")){e.preventDefault();readForm();const k=fb.dataset.f,v=fb.dataset.v;F[k]=v;F.touched[k]=true;F.err="";F.dup=null;F.dupOk=null;
-    if(k==="type"){F.category="";F.ready=false;if(v!=="Transfer")F.to=""}
+    if(k==="type"){F.category="";F.newCat=null;F.ready=false;if(v!=="Transfer")F.to=""}
     if(k==="account"&&F.to===v)F.to="";
     if(k==="category"&&F.step===2){if(!F.touched.account||!F.id){const la=lastAccountFor(v);if(la&&!F.rec)F.account=la}F.step=3}
     drawSheet();return}
@@ -4205,6 +4235,8 @@ document.addEventListener("click",async e=>{
   switch(act){
     case "add":if(!S.cfg||!S.db)return;if(a.closest("nav.tabs"))toggleFan();else openTx();break;
     case "fan":pickFan(a.dataset.v,a);break;
+    case "catnew":if(F){readForm();F.newCat="";F.err="";drawSheet();focusNewCat()}break;
+    case "catnewx":if(F){F.newCat=null;F.err="";drawSheet()}break;
     case "fandraft":closeFan(true);openTx();break;
     case "fanclose":closeFan();break;
     case "close":case "closebg":stashSheets();IM=null;GQ=null;F=null;P=null;V=null;W=null;Y=null;N=false;G=null;E=false;K=null;Q=null;SF=false;MB=null;RS=null;clearSheet();break;
@@ -4213,7 +4245,7 @@ document.addEventListener("click",async e=>{
     case "fstep":readForm();F.err="";F.step=+a.dataset.s;drawSheet();if(F.step===1)setTimeout(()=>{const i=$("#famt");if(i)i.focus()},40);break;
     case "dtoday":readForm();F.date=today();drawSheet();break;
     case "dyest":readForm();F.date=addDays(today(),-1);drawSheet();break;
-    case "saveagain":e.preventDefault();saveTx(true);break;
+    case "saveagain":e.preventDefault();once("tx",()=>saveTx(true));break;
     case "del":
       if(!F.armed){readForm();F.armed=true;drawSheet();return}
       try{const t0=S.tx.find(x=>x.id===F.id);await S.db.doc("tx/"+F.id).delete();await skipAutoInterest(t0).catch(()=>false);toast("Deleted");F=null;drawSheet()}catch(err){F.err=dbMsg(err);F.armed=false;drawSheet()}break;
@@ -4422,7 +4454,7 @@ document.addEventListener("input",e=>{if(F&&e.target&&(e.target.id==="ffx"||e.ta
 document.addEventListener("input",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("change",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("input",e=>{if(V&&e.target.closest&&e.target.closest("#valform")){readVal();const t=$("#vtot");if(t)t.textContent=money(valTotal())}});
-document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else saveTx(false)}if(e.target.id==="propform")saveProp();if(e.target.id==="tripform")tripSave();if(e.target.id==="pauseform")savePause();if(e.target.id==="valform")saveVal();if(e.target.id==="goalform")saveGoal(false);if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
+document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else once("tx",()=>saveTx(false))}if(e.target.id==="propform")once("prop",saveProp);if(e.target.id==="tripform")once("trip",tripSave);if(e.target.id==="pauseform")once("pause",savePause);if(e.target.id==="valform")once("val",saveVal);if(e.target.id==="goalform")once("goal",()=>saveGoal(false));if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
 document.addEventListener("change",e=>{
   const el=e.target;
   if(el.id==="fdesc"&&F){readForm();const before=JSON.stringify([F.type,F.category,F.account,F.to]);autofill(el.value);if(JSON.stringify([F.type,F.category,F.account,F.to])!==before)drawSheet()}
