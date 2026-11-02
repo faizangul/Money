@@ -1,4 +1,4 @@
-const CACHE="money-tracker-v54";
+const CACHE="money-tracker-v55";
 const WAIT=800;
 const FILES=["./","./index.html","./manifest.webmanifest","./icon-180.png","./icon-192.png","./icon-512.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES)));self.skipWaiting()});

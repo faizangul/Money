@@ -81,6 +81,7 @@ const webBackend={
     return{store:s,meta:m,ok};
   },
   write:(p,next,all)=>lsSave(all),
+  writeMany:(puts,all)=>lsSave(all),
   replaceAll:lsSave,
   saveMeta(m){try{localStorage.setItem(META,JSON.stringify(m))}catch(e){}return Promise.resolve()}
 };
@@ -103,6 +104,7 @@ const iosBackend={
   },
   write:(p,next)=>chain(()=>sql("write",next===undefined?{dels:[p]}:{puts:[{p,d:JSON.stringify(next)}]})),
   replaceAll:next=>chain(()=>sql("replaceAll",{docs:rows(next)})),
+  writeMany:puts=>chain(()=>sql("write",{puts:puts.map(([p,d])=>({p,d:JSON.stringify(d)}))})),
   saveMeta:m=>chain(()=>sql("setValue",{k:"meta",v:JSON.stringify(m)}))
 };
 const backend=NATIVE?iosBackend:webBackend;
@@ -166,6 +168,16 @@ function write(p,d){
     return Promise.reject(e&&e.code==="quota_exceeded"?e:{code:"unavailable",message:"Couldn't save on this phone"});
   });
 }
+/* several documents saved together: [[path,doc],...]. All of them land, or none do. */
+function writeMany(list){
+  const puts=list.map(([p,d])=>[p,JSON.parse(JSON.stringify(d))]),prev=puts.map(([p])=>[p,store[p]]);
+  puts.forEach(([p,d])=>{store[p]=d});
+  return backend.writeMany(puts,store).then(()=>{meta.changes=(meta.changes||0)+1;saveMeta();fire()},e=>{
+    prev.forEach(([p,d])=>{if(d===undefined)delete store[p];else store[p]=d});
+    console.error("Save failed",e);
+    return Promise.reject(e&&e.code==="quota_exceeded"?e:{code:"unavailable",message:"Couldn't save on this phone"});
+  });
+}
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 function docRef(p){return{id:p.split("/").pop(),path:p,
   get:async()=>snap(p),set:d=>write(p,d),
@@ -178,7 +190,7 @@ function collRef(c){return{path:c,
   add:async d=>{const r=docRef(c+"/"+newId());await r.set(d);return r},
   get:async()=>{const docs=members(c);return{docs,size:docs.length,empty:!docs.length,docChanges:()=>[],metadata:{}}},
   onSnapshot(next){const f=()=>{const docs=members(c);next({docs,size:docs.length,empty:!docs.length,docChanges:()=>[],metadata:{}})};subs.add(f);setTimeout(f,0);return()=>subs.delete(f)}}}
-const db={doc:docRef,collection:collRef};
+const db={doc:docRef,collection:collRef,batch:writeMany};
 
 /* iOS: the native share sheet (Save to Files, AirDrop, Mail). Web: the browser's share sheet where it can
    share files, otherwise a download. Calendar files always download so the browser offers to add them. */
@@ -1044,6 +1056,9 @@ if(!["home","activity","insights","more","people","trading","loans","settings","
 /* ---------- derived data ---------- */
 const cats=()=>S.cfg?S.cfg.categories:[];
 const catOf=n=>cats().find(c=>c.name===n);
+/* some features find a category by its wording ("interest", "fee", "salary"); a renamed one remembers the earlier wording in aka */
+const CAT_WORDS=/interest|fee|wage|salary|pay|investment income/i;
+const catWords=c=>c.name+(c.aka?" "+c.aka:"");
 const accounts=()=>S.cfg?S.cfg.accounts:[];
 function roleCat(role){const c=cats().find(c=>c.role===role);return c?c.name:null}
 const FEATS=[["investments","Investments","ETFs, shares or a brokerage account"],["goals","Savings goals","Saving towards something by a date"],["people","IOUs with people","Lending and borrowing with friends and family"],["loans","Loans","A loan you're paying down"],["remit","Money sent home","Sending money to family overseas"],["trading","Prop trading","Prop firm accounts, fees and payouts"]];
@@ -1105,7 +1120,7 @@ function SUPER(){return AU()?"Super":"Retirement"}
 function syncRegion(){const au=AU();KINDS.forEach(k=>{if(k[0]==="super")k[1]=au?"Super":"Retirement"});ACCK.super=au?"Super":"Retirement";
   Object.assign(ACCPH,au?{everyday:"e.g. CBA Everyday",savings:"e.g. ING Savings Maximiser",super:"e.g. AustralianSuper"}:{everyday:"e.g. Everyday account",savings:"e.g. High-interest savings",super:"e.g. Pension, 401(k), KiwiSaver"})}
 function superPayCats(a){if(a.sgCat)return new Set([a.sgCat]);const rc=((S.cfg&&S.cfg.recurring)||[]).filter(r=>r.pay&&r.type==="Income").map(r=>r.category).filter(Boolean);
-  if(rc.length)return new Set(rc);return new Set(cats().filter(c=>c.kind==="Income"&&/wage|salary|pay/i.test(c.name)).map(c=>c.name))}
+  if(rc.length)return new Set(rc);return new Set(cats().filter(c=>c.kind==="Income"&&/wage|salary|pay/i.test(catWords(c))).map(c=>c.name))}
 function superRate(a){return a.sgRate===undefined||a.sgRate===""||a.sgRate===null?(AU()?12:0):+a.sgRate||0}
 function superEst(a,v){const m=a.sgMode||"pct";return m==="off"?0:m==="fixed"?(+a.sgAmt||0):v*superRate(a)/100}
 function superAt(a,date,all){const vs=invVals(a).filter(x=>x.d<=date),last=(!all&&vs[vs.length-1])||{d:"0000-01-01",t:0,v:+a.opening||0,c:0,start:true},pc=superPayCats(a);let own=0,emp=0;const items=[];
@@ -1249,7 +1264,7 @@ async function savePause(){readPause();const c=JSON.parse(JSON.stringify(S.cfg))
     toast(Q.opt==="move"?`Paused. Moved ${money0(amt)} to ${Q.to}`:Q.opt==="free"?`Paused. ${money0(amt)} freed up`:"Goal paused");Q=null;drawPause()}catch(e){Q.err=dbMsg(e);drawPause()}}
 /* payday check-in */
 function lastPayday(){const p=payItem(),t=today();let d=null;if(p&&p.anchor){const o=payDates(addDays(t,-35),t);if(o.length)d=o[o.length-1]}
-  const ic=new Set(p?[p.category]:cats().filter(c=>c.kind==="Income"&&!/interest/i.test(c.name)).map(c=>c.name));
+  const ic=new Set(p?[p.category]:cats().filter(c=>c.kind==="Income"&&!/interest/i.test(catWords(c))).map(c=>c.name));
   const inc=S.tx.filter(x=>x.type==="Income"&&x.date<=t&&x.date>=addDays(t,-6)&&ic.has(x.category)).map(x=>x.date).sort().pop();
   if(inc&&(!d||inc>d))d=inc;return d}
 function payGoals(){return goalOrder(((S.cfg.goals)||[]).map((g,i)=>Object.assign({},g,{_i:i}))).filter(g=>g.name&&!g.paused&&g.plan&&+g.plan.amt>0&&(g.plan.start||"")<=today()&&g.date&&g.date>today()&&(+g.target||0)>goalHave(g,balances())+0.5)}
@@ -1429,7 +1444,7 @@ function dayIn(m,day){const last=new Date(Date.UTC(+m.slice(0,4),+m.slice(5),0))
 function nextDue(day){const t=today();let d=dayIn(ym(t),day);if(d<t)d=dayIn(shiftMonth(ym(t),1),day);return d}
 function payFrom(a){if(a.payFrom&&accounts().some(x=>x.name===a.payFrom))return a.payFrom;const e=accounts().find(x=>x.kind==="everyday")||accounts().find(x=>x.kind!=="credit"&&!isInv(x)&&!isSuper(x));return e?e.name:""}
 const INTCAD={month:"Monthly",quarter:"Every 3 months",year:"Yearly"};
-function intCat(){const c=cats().find(c=>c.kind==="Income"&&/interest/i.test(c.name));return c?c.name:"Interest"}
+function intCat(){const c=cats().find(c=>c.kind==="Income"&&/interest/i.test(catWords(c)));return c?c.name:"Interest"}
 function intPast(a){const ic=intCat();return S.tx.filter(t=>t.type==="Income"&&t.account===a.name&&(t.category===ic||String(t.rec||"").startsWith("int:"))&&!t.est).sort((x,y)=>y.date.localeCompare(x.date))}
 function intEst(a){const past=intPast(a).slice(0,3);
   if(past.length)return {amt:r2(past.reduce((s2,t)=>s2+(+t.amount||0),0)/past.length),src:"past",n:past.length};
@@ -1489,7 +1504,7 @@ function repeatsCard(){const R=repeats();if(!R.length)return"";const tot=R.reduc
     <div class="rows">${R.slice(0,8).map(x=>`<div class="row"><div class="main"><div class="t">${esc(x.name)}</div><div class="s num">${money(x.avg)} ${CADL[x.cad]} · ${esc(x.category)} · next ≈ ${shortDate(x.next)}</div></div>
       <button class="btn sm" data-act="repadd" data-k="${esc(x.k)}">Add as bill</button><button class="x" data-act="repign" data-k="${esc(x.k)}" aria-label="Not a repeating charge">×</button></div>`).join("")}</div>
     <p class="small muted" style="margin:8px 0 0">Added bills show under Coming up and count in Safe to spend.</p></section>`}
-function feeCat(){const c=cats().find(c=>c.kind==="Expense"&&/fee/i.test(c.name));return c?c.name:"Bank fees"}
+function feeCat(){const c=cats().find(c=>c.kind==="Expense"&&/fee/i.test(catWords(c)));return c?c.name:"Bank fees"}
 function isCard(name){const a=accounts().find(x=>x.name===name);return !!a&&a.kind==="credit"}
 async function setSkip(u,on){
   const c=JSON.parse(JSON.stringify(S.cfg));let holder,field="skipped";
@@ -2287,8 +2302,8 @@ function imClassify(r,acct){const A=accounts().find(a=>a.name===acct)||{},dir=r.
   if(own&&/transfer|xfer|tfr|to |from |payment|osko|internal|sweep|save|bpay/.test(lo))return {sel:(dir<0?"T>|":"T<|")+own.name,why:"own"};
   if(A.kind==="credit"&&dir>0&&/payment|thank you|bpay|direct debit|autopay/.test(lo)){const f=payFrom(A);if(f)return {sel:"T<|"+f,why:"card"}}
   if(dir<0&&/credit card|card payment|amex|american express|mastercard|visa payment/.test(lo)){const c=accounts().find(a=>a.kind==="credit"&&a.name!==acct);if(c)return {sel:"T>|"+c.name,why:"card"}}
-  if(dir>0){if(/interest/.test(lo)){const c=cats().find(c=>c.kind==="Income"&&/interest/i.test(c.name))||cats().find(c=>c.kind==="Income"&&/other/i.test(c.name));if(c)return {sel:"I|"+c.name,why:"word"}}
-    const p=payItem();if(/salary|wage|payroll|\bpay\b|pay run/.test(lo)||(p&&p.desc&&imKey(p.desc)===key)){const c=(p&&p.category)||(cats().find(c=>c.kind==="Income"&&/salary|wage|pay/i.test(c.name))||{}).name;if(c)return {sel:"I|"+c,why:"word"}}
+  if(dir>0){if(/interest/.test(lo)){const c=cats().find(c=>c.kind==="Income"&&/interest/i.test(catWords(c)))||cats().find(c=>c.kind==="Income"&&/other/i.test(c.name));if(c)return {sel:"I|"+c.name,why:"word"}}
+    const p=payItem();if(/salary|wage|payroll|\bpay\b|pay run/.test(lo)||(p&&p.desc&&imKey(p.desc)===key)){const c=(p&&p.category)||(cats().find(c=>c.kind==="Income"&&/salary|wage|pay/i.test(catWords(c)))||{}).name;if(c)return {sel:"I|"+c,why:"word"}}
     return {sel:"",why:"ask"}}
   if(/excess interest|interest charged|debit interest|overdrawn|\bfee\b/.test(lo)){const c=imCat("Bank fees","Expense");if(c)return {sel:"E|"+c,why:"word"}}
   if(feat("remit")&&/\bwise\b|transferwise|remitly|western ?union|moneygram|worldremit|\bxe\.com|instarem|ria money/.test(lo)){const c=roleCat("remit");if(c)return {sel:"E|"+c,why:"word"}}
@@ -2955,6 +2970,49 @@ function efHome(){const pl=efPlan(),ef=efNumbers();if(!(ef.base>0))return"";
   return h}
 let K=null;
 function openCat(c){K={c,m:S.month};drawCat()}
+/* ---------- renaming a category ---------- */
+const canRenameCat=c=>!!c&&!c.role&&!RESERVED_CATS.has(String(c.name).toLowerCase());
+function renameCatCheck(raw,from,list){const self=list.find(c=>c.name===from);if(!canRenameCat(self))return{err:"This category can't be renamed."};
+  const tidy=String(raw??"").trim().replace(/\s+/g," ");if(tidy===from)return{same:true};
+  const r=newCatCheck(tidy,self.kind,list.filter(c=>c.name!==from));
+  return r.existing?{err:`You already have “${r.existing}”. Try a different name.`}:r}
+/* every place the settings keep a category's name; returns the same object */
+function renameCatIn(cfg,from,to){const keep=(cfg.categories||[]).find(c=>(c._orig||c.name)===from);
+  if(keep){keep.name=to;if(keep._orig)keep._orig=to;if(CAT_WORDS.test(from)&&!CAT_WORDS.test(to))keep.aka=[keep.aka,from].filter(Boolean).join(" ")}
+  (cfg.recurring||[]).forEach(r=>{if(r.category===from)r.category=to});
+  (cfg.goals||[]).forEach(g=>{if(g.cat===from)g.cat=to});
+  (cfg.doneGoals||[]).forEach(g=>{if(g.cat===from)g.cat=to});
+  (cfg.accounts||[]).forEach(a=>{if(a.sgCat===from)a.sgCat=to});
+  if(cfg.taxCats)cfg.taxCats=cfg.taxCats.map(n=>n===from?to:n);
+  const sel=v=>v==="E|"+from?"E|"+to:v==="I|"+from?"I|"+to:v;
+  for(const k in cfg.impRules||{})cfg.impRules[k]=sel(cfg.impRules[k]);
+  return cfg}
+async function renameCategory(from,to){
+  const c=renameCatIn(JSON.parse(JSON.stringify(S.cfg)),from,to);
+  const txs=S.tx.filter(t=>t.category===from).map(({id,...t})=>["tx/"+id,Object.assign(t,{category:to})]);
+  if(S.db.batch)await S.db.batch([["app/config",c],...txs]);
+  else{/* storage that can only save one document at a time: the note lets an interrupted rename finish on the next start */
+    c.catRen={from,to};await S.db.doc("app/config").set(c);await finishCatRename(c,txs)}
+  if(S.draft){renameCatIn(S.draft,from,to);if(S.draftDirty)LS.set("mt.sdraft",S.draft)}
+  if(F&&F.category===from)F.category=to;
+  const td=LS.get("mt.txdraft");if(td&&td.category===from){td.category=to;LS.set("mt.txdraft",td)}
+  if(IM&&IM.rows){const sel=v=>v==="E|"+from?"E|"+to:v==="I|"+from?"I|"+to:v;IM.rows.forEach(r=>{r.sel=sel(r.sel)});for(const k in IM.ans||{})IM.ans[k]=sel(IM.ans[k])}
+}
+async function finishCatRename(c,txs){for(const [p,d] of txs)await S.db.doc(p).set(d);const done=JSON.parse(JSON.stringify(c));delete done.catRen;await S.db.doc("app/config").set(done)}
+function resumeCatRename(){const{from,to}=S.cfg.catRen;return finishCatRename(S.cfg,S.tx.filter(t=>t.category===from).map(({id,...t})=>["tx/"+id,Object.assign(t,{category:to})]))}
+const focusCatRen=()=>{const i=$("#fcatren");if(i){i.focus();try{i.select()}catch(e){}}};
+async function saveCatRename(){if(!K||K.ren==null)return;const i=$("#fcatren");if(i)K.ren=i.value;
+  const from=K.c,list=[...cats(),...((S.draft&&S.draft.categories)||[]).filter(d=>!cats().some(c=>c.name===d.name)&&(d._orig||d.name)!==from)],r=renameCatCheck(K.ren,from,list);
+  if(r.same){K.ren=null;K.err="";return drawCat()}
+  if(r.err){K.err=r.err;drawCat();focusCatRen();return}
+  const k=K,n=S.tx.filter(t=>t.category===from).length;
+  try{await renameCategory(from,r.name);toast(`Renamed to ${r.name}${n?` · ${n} transaction${n===1?"":"s"} updated`:""}`);
+    if(K===k){K.c=r.name;K.ren=null;K.err="";K.renamed=true;if(catOf(r.name))drawCat()}}
+  catch(e){if(K===k){K.err=dbMsg(e);drawCat()}else toast(dbMsg(e))}}
+function catRenameHtml(c){const n=S.tx.filter(t=>t.category===c.name).length;
+  return `<form id="catrenform" class="field" novalidate><label for="fcatren">New name</label><div class="newcatrow"><input class="inp" id="fcatren" maxlength="40" autocomplete="off" autocapitalize="sentences" value="${esc(K.ren)}"><button type="submit" class="btn primary">Save</button></div>
+    <p class="small muted" style="margin:0">${n?`Updates ${n} transaction${n===1?"":"s"}, plus any bills and goals using it. `:""}Your totals stay the same.</p>
+    ${K.err?`<p class="err" role="alert" style="margin:0">${esc(K.err)}</p>`:""}<button type="button" class="linkbtn" data-act="catrenx" style="align-self:flex-start">Cancel</button></form>`}
 function drawCat(){const host=$("#sheetHost");if(!K){clearSheet();return}
   const c=catOf(K.c)||{name:K.c,kind:"Expense"},inc=c.kind==="Income",m=K.m,{min,max}=monthsRange(),cur=m===ym(today());
   const amt=r2(monthStats(m).byCat[c.name]||0),b=+c.budget||0,col=inc?"var(--accent)":c.essential?"var(--c2)":"var(--c3)";
@@ -2969,8 +3027,9 @@ function drawCat(){const host=$("#sheetHost");if(!K){clearSheet();return}
   const good=(v,base)=>base===null||base===undefined||Math.abs(v-base)<0.5?"":(inc?(v>base?"color:var(--accent)":"color:var(--neg)"):(v>base?"color:var(--neg)":"color:var(--accent)"));
   host.innerHTML=`<div class="scrim" data-act="closebg"><div class="sheet${$("#sheetHost .sheet")?"":" enter"}" role="dialog" aria-modal="true" aria-label="${esc(c.name)}"><div class="grab"></div>
    <div class="sh"><h2>${esc(c.name)}</h2><button type="button" class="x" data-act="close" aria-label="Close">×</button></div>
-   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span class="small muted">${inc?"Income":c.essential?"Essential":"Non-essential"}</span>
+   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span class="small muted">${inc?"Income":c.essential?"Essential":"Non-essential"}${canRenameCat(catOf(K.c))&&K.ren==null?` · <button type="button" class="linkbtn" data-act="catren" style="font-size:inherit">Rename</button>`:""}</span>
     <span class="seg" style="display:flex;grid-template-columns:none;padding:3px"><button type="button" data-act="catm" data-d="-1" aria-label="Previous month" ${m<=min?"disabled":""} style="padding:6px 12px">‹</button><b style="padding:6px 6px;font-size:13.5px;white-space:nowrap">${mLabel(m)}</b><button type="button" data-act="catm" data-d="1" aria-label="Next month" ${m>=max?"disabled":""} style="padding:6px 12px">›</button></span></div>
+   ${K.ren!=null?catRenameHtml(c):""}
    <div><div class="eyebrow">${inc?"Received":"Spent"} in ${mLong(m)}${cur?" so far":""}</div><div class="bigline num" data-cnt="${amt}">${money0(amt)}</div>
     ${b>0?`<div class="bar" style="margin-top:8px;height:10px"><i class="${cls}" style="width:${Math.min(100,pct*100).toFixed(1)}%;${cls?"":`background:${col}`}"></i></div>
      <p class="small" style="margin:6px 0 0">${inc?`${money0(amt)} of ${money0(b)} expected`:amt<=b?`${money0(b-amt)} left of your ${money0(b)} budget`:`<b class="amt neg">${money0(amt-b)} over</b> your ${money0(b)} budget`}</p>`:`<p class="small muted" style="margin:6px 0 0">No budget set for this.</p>`}</div>
@@ -3128,7 +3187,7 @@ function sampleStore(){
 function subscribe(db){
   (S.unsubs||[]).forEach(u=>{try{u()}catch(e){}});
   let got={c:false,t:false};
-  const ready=()=>{if(got.c&&got.t){S.state="ready";S._resubN=0;render();clearTimeout(S._intT);S._intT=setTimeout(autoInterest,400)}};
+  const ready=()=>{if(got.c&&got.t){S.state="ready";S._resubN=0;render();if(S.cfg&&S.cfg.catRen&&!S.demo)once("catren",resumeCatRename);if(K&&K.renamed&&!F)drawCat();clearTimeout(S._intT);S._intT=setTimeout(autoInterest,400)}};
   /* a listener that dies stops updates for good: show access problems plainly, and reconnect after transient ones */
   const fail=e=>{const c=e&&e.code;if(S.db!==db)return;
     if(["revoked","not_granted","capability_disabled","capability_removed"].includes(c)){S.state="nodb";render();return}
@@ -3406,7 +3465,7 @@ function vSettings(){
    <p class="small muted" style="margin:10px 0 0">"At start" is the balance when you began tracking. Today's balance is worked out from your transactions.</p></section>`;
 
   // categories and budgets
-  const catRow=(c,i)=>{const used=usedC.has(c.name);return `<div class="crow">${used||c.role?`<div class="fixedname">${esc(c.name)}</div>`:`<input class="inp" type="text" id="cn${i}" data-s="categories.${i}.name" value="${esc(c.name)}" aria-label="Category name" placeholder="Category name">`}
+  const catRow=(c,i)=>{const used=usedC.has(c.name);return `<div class="crow">${used||c.role?`<div class="fixedname">${esc(c.name)}${canRenameCat(c)&&catOf(c.name)?` <button type="button" class="linkbtn" data-act="catrenopen" data-c="${esc(c.name)}" style="font-size:13px;display:block" aria-label="Rename ${esc(c.name)}">Rename</button>`:""}</div>`:`<input class="inp" type="text" id="cn${i}" data-s="categories.${i}.name" value="${esc(c.name)}" aria-label="Category name" placeholder="Category name">`}
      ${MONEY("cb"+i,`categories.${i}.budget`,Math.round(+c.budget||0),"1")}${XBTN("categories",i,!(used||c.role))}</div>`};
   const essB=d.categories.filter(c=>c.kind==="Expense"&&c.essential).reduce((s,c)=>s+(+c.budget||0),0);
   const inB=d.categories.filter(c=>c.kind==="Income").reduce((s,c)=>s+(+c.budget||0),0),exB=d.categories.filter(c=>c.kind==="Expense").reduce((s,c)=>s+(+c.budget||0),0);
@@ -4311,8 +4370,8 @@ document.addEventListener("click",async e=>{
         (d.goals||[]).filter(g=>(g.name||"").trim()&&goalWhere(g)!=="else"&&g.account&&!have.has(g.account)).forEach(g=>miss.push(`the goal “${g.name}”`));
         d.loans.filter(l=>l.from&&!have.has(l.from)).forEach(l=>miss.push(`the loan “${l.name||"Loan"}”`));
         if(miss.length){er.textContent=`${miss[0][0].toUpperCase()+miss[0].slice(1)} uses an account you removed. Pick another account for it, then save.`;er.hidden=false;return}}
-      {const need=[];if(d.accounts.some(a=>+a.fee>0)&&!d.categories.some(c=>c.kind==="Expense"&&/fee/i.test(c.name)))need.push(["Bank fees","Expense",""]);if(d.features.trading){need.push(["Trading – Payout","Income","payout"],["Trading – Prop firm fees","Expense","propfees"])}
-        if(d.features.loans)need.push(["Loan repayment","Expense","loan"]);if(d.features.investments&&!d.categories.some(c=>c.name==="Investment income"))need.push(["Investment income","Income",""]);if(d.accounts.some(a=>a.intOn)&&!d.categories.some(c=>c.kind==="Income"&&/interest/i.test(c.name)))need.push(["Interest","Income",""]);if(d.features.remit)need.push(["Sent home","Expense","remit"]);
+      {const need=[];if(d.accounts.some(a=>+a.fee>0)&&!d.categories.some(c=>c.kind==="Expense"&&/fee/i.test(catWords(c))))need.push(["Bank fees","Expense",""]);if(d.features.trading){need.push(["Trading – Payout","Income","payout"],["Trading – Prop firm fees","Expense","propfees"])}
+        if(d.features.loans)need.push(["Loan repayment","Expense","loan"]);if(d.features.investments&&!d.categories.some(c=>/\binvestment income\b/i.test(catWords(c))))need.push(["Investment income","Income",""]);if(d.accounts.some(a=>a.intOn)&&!d.categories.some(c=>c.kind==="Income"&&/interest/i.test(catWords(c))))need.push(["Interest","Income",""]);if(d.features.remit)need.push(["Sent home","Expense","remit"]);
         for(const [n,k,r] of need){if(r&&d.categories.some(c=>c.role===r))continue;const ex=d.categories.find(c=>c.name===n);if(ex){ex.role=r;continue}d.categories.push({name:n,kind:k,essential:false,budget:0,role:r})}}
       delete d.storyNote;d.profile.name=(d.profile.name||"").trim();d.profile.jobTitle=(d.profile.jobTitle||"").trim();
       d.emergencyMonths=+d.emergencyMonths||0;d.propLimit=r2(d.propLimit);d.goals=(d.goals||[]).filter(g=>(g.name||"").trim()).map(g=>({...g,name:g.name.trim(),target:r2(g.target),saved:r2(g.saved)}));
@@ -4420,6 +4479,9 @@ document.addEventListener("click",async e=>{
       await payCheckSave(pc=>{pc.snooze=t.toISOString()});toast(v==="tonight"?"Reminder tonight":v==="tomorrow"?"Reminder tomorrow":"Reminder in 3 days");break}
     case "loanpay":{const l=(S.cfg.loans||[]).find(x=>x.id===a.dataset.id);if(l)openTx(loanTx(l,{date:today()}));break}
     case "catopen":openCat(a.dataset.c);break;
+    case "catren":if(K){K.ren=K.c;K.err="";drawCat();focusCatRen()}break;
+    case "catrenx":if(K){K.ren=null;K.err="";drawCat()}break;
+    case "catrenopen":K={c:a.dataset.c,m:S.month,ren:a.dataset.c};drawCat();focusCatRen();break;
     case "catm":if(K){const {min,max}=monthsRange(),n=shiftMonth(K.m,+a.dataset.d);if(n>=min&&n<=max){K.m=n;drawCat()}}break;
     case "catgo":if(K){K.m=a.dataset.m;drawCat()}break;
     case "catadd":if(K){const c=catOf(K.c)||{kind:"Expense"};openTx({type:c.kind==="Income"?"Income":"Expense",category:K.c,ready:true,touched:{type:1,category:1}})}break;
@@ -4465,7 +4527,7 @@ document.addEventListener("input",e=>{if(F&&e.target&&(e.target.id==="ffx"||e.ta
 document.addEventListener("input",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("change",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("input",e=>{if(V&&e.target.closest&&e.target.closest("#valform")){readVal();const t=$("#vtot");if(t)t.textContent=money(valTotal())}});
-document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else once("tx",()=>saveTx(false))}if(e.target.id==="propform")once("prop",saveProp);if(e.target.id==="tripform")once("trip",tripSave);if(e.target.id==="pauseform")once("pause",savePause);if(e.target.id==="valform")once("val",saveVal);if(e.target.id==="goalform")once("goal",()=>saveGoal(false));if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
+document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else once("tx",()=>saveTx(false))}if(e.target.id==="catrenform")once("catren",saveCatRename);if(e.target.id==="propform")once("prop",saveProp);if(e.target.id==="tripform")once("trip",tripSave);if(e.target.id==="pauseform")once("pause",savePause);if(e.target.id==="valform")once("val",saveVal);if(e.target.id==="goalform")once("goal",()=>saveGoal(false));if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
 document.addEventListener("change",e=>{
   const el=e.target;
   if(el.id==="fdesc"&&F){readForm();const before=JSON.stringify([F.type,F.category,F.account,F.to]);autofill(el.value);if(JSON.stringify([F.type,F.category,F.account,F.to])!==before)drawSheet()}
@@ -4487,6 +4549,7 @@ document.addEventListener("input",e=>{if(Y&&e.target.id==="ytext"){Y.text=e.targ
   if(F&&F.dup&&e.target.closest&&e.target.closest("#txform")){F.dup=null;F.dupOk=null;const n=document.querySelector("#txform .nudge.warn");if(n)n.remove()}
   if(F&&F.err&&e.target.closest&&e.target.closest("#txform")){F.err="";const er=document.querySelector("#txform .err");if(er)er.remove()}
   if(W&&W.err&&e.target.closest&&e.target.closest("#setupform")){W.err="";const er=document.querySelector("#setupform .err");if(er)er.remove()}
+  if(K&&e.target.id==="fcatren"){K.ren=e.target.value;if(K.err){K.err="";const er=document.querySelector("#catrenform .err");if(er)er.remove()}}
   if(e.target.id==="actq"){S.actQ=e.target.value;S.actLim=0;clearTimeout(window.__aq);window.__aq=setTimeout(()=>{const p=e.target.selectionStart;render();requestAnimationFrame(()=>{const i=$("#actq");if(i){i.focus();try{i.setSelectionRange(p,p)}catch(x){}}})},250)}});
 /* quick-add fan above the + button */
 const FANI={Expense:'<path d="M12 19V5M6 13l6 6 6-6"/>',Income:'<path d="M12 5v14M6 11l6-6 6 6"/>',Transfer:'<path d="M4 8h14M14 4l4 4-4 4M20 16H6M10 12l-4 4 4 4"/>',"IOU out":'<circle cx="9" cy="8" r="3.2"/><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6M16 7h5M18.5 4.5v5"/>'};
@@ -4567,7 +4630,7 @@ function wrapDb(db){const pause=()=>new Promise(r=>setTimeout(r,400+Math.random(
   const retry=fn=>async(...a)=>{try{return await fn(...a)}catch(e){if(e&&e.code==="unavailable"){await pause();return fn(...a)}throw e}};
   const doc=r=>({id:r.id,path:r.path,get:retry(()=>r.get()),set:retry(d=>r.set(d)),update:retry(d=>r.update(d)),delete:retry(()=>r.delete()),onSnapshot:(n,er)=>r.onSnapshot(n,er)});
   const col=c=>({path:c.path,doc:id=>doc(id?c.doc(id):c.doc()),add:retry(d=>c.add(d)),onSnapshot:(n,er)=>c.onSnapshot(n,er)});
-  return {doc:p=>doc(db.doc(p)),collection:p=>col(db.collection(p))}}
+  return {doc:p=>doc(db.doc(p)),collection:p=>col(db.collection(p)),batch:db.batch?retry(l=>db.batch(l)):null}}
 async function boot(){
   render();
   let db=null;
