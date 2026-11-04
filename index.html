@@ -962,7 +962,7 @@ details.more[open] summary{margin-bottom:10px}
 #backhint{position:fixed;left:calc(10px + env(safe-area-inset-left,0px));top:50%;width:44px;height:44px;margin-top:-22px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;z-index:35;opacity:0;transform:scale(.6);pointer-events:none;transition:opacity .12s,transform .12s}
 #backhint svg{width:22px;height:22px}
 #backhint.ready{transform:scale(1.08)}
-.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:50;background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-weight:600;font-size:14px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:50;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-weight:600;font-size:14px}
 #updbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:35;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;background:var(--ink);color:var(--bg);padding:4px 4px 4px 16px;border-radius:999px;font-weight:600;font-size:14px}
 #updbar button{border:0;background:none;color:inherit;font:inherit;min-height:36px;cursor:pointer}
 #updbar .go{font-weight:700;text-decoration:underline;text-underline-offset:3px;padding:0 8px}
