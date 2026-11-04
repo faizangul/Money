@@ -840,7 +840,9 @@ body.pinon{overflow:hidden}body.pinon #app,body.pinon nav.tabs,body.pinon #sheet
 .efslim .tick svg{width:17px;height:17px}
 .efadv{border-left:3px solid var(--accent)}
 .efadv.warn{border-left-color:var(--c2)}
-@media (prefers-reduced-motion:reduce){.efdone .chk,.efdone .cf{animation:none}.efdone .cf{display:none}}
+.cfburst{position:fixed;inset:0;z-index:49;overflow:hidden;pointer-events:none}
+.cfburst .cf{position:absolute;width:7px;height:7px;border-radius:2px;top:30%;left:var(--x);background:var(--c);opacity:0;animation:effall 1.6s ease-out var(--d) 1 forwards}
+@media (prefers-reduced-motion:reduce){.efdone .chk,.efdone .cf{animation:none}.efdone .cf,.cfburst{display:none}}
 .hsec{display:flex;flex-direction:column;gap:14px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;transition:transform .35s cubic-bezier(.2,.8,.2,1),filter .35s}
 .hsec.pressing{transform:scale(.975);filter:brightness(.97)}
 .htip{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:color-mix(in srgb,var(--accent) 10%,var(--surface));border:1px dashed color-mix(in srgb,var(--accent) 45%,transparent);font-size:13.5px}
@@ -961,7 +963,7 @@ details.more[open] summary{margin-bottom:10px}
 #backhint svg{width:22px;height:22px}
 #backhint.ready{transform:scale(1.08)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:50;background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-weight:600;font-size:14px}
-#updbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:35;display:flex;align-items:center;gap:6px;white-space:nowrap;background:var(--ink);color:var(--bg);padding:4px 4px 4px 16px;border-radius:999px;font-weight:600;font-size:14px}
+#updbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:35;display:flex;align-items:center;gap:6px;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;background:var(--ink);color:var(--bg);padding:4px 4px 4px 16px;border-radius:999px;font-weight:600;font-size:14px}
 #updbar button{border:0;background:none;color:inherit;font:inherit;min-height:36px;cursor:pointer}
 #updbar .go{font-weight:700;text-decoration:underline;text-underline-offset:3px;padding:0 8px}
 #updbar .x{width:36px;padding:0;font-size:16px}
@@ -2716,13 +2718,14 @@ function readGoalQuick(){const v=id=>{const e=$(id);return e?(e.type==="checkbox
 async function saveGoalQuick(){readGoalQuick();const gi=(S.cfg.goals||[]).findIndex(x=>x.id===GQ.id),g=S.cfg.goals[gi];if(!g)return;const w=goalWhere(g),bal=balances(),have=goalHave(g,bal);
   let amt=r2(parseAmt(GQ.amt));if(!(amt>0)&&GQ.mode==="spend"&&!String(GQ.amt).trim())amt=r2(have);if(!(amt>0)){GQ.err="Enter an amount above zero.";return drawGoalQuick()}
   if(!/^\d{4}-\d{2}-\d{2}$/.test(GQ.date||""))GQ.date=today();
-  const c=JSON.parse(JSON.stringify(S.cfg)),cg=c.goals.find(x=>x.id===g.id);let msg="",tx=null,cfgCh=false;
+  const c=JSON.parse(JSON.stringify(S.cfg)),cg=c.goals.find(x=>x.id===g.id);let msg="",tx=null,cfgCh=false,reached=false;
   if(GQ.mode==="add"){
     if(w==="else"){cg.saved=r2((+cg.saved||0)+amt);cfgCh=true}
     else if(w==="part"&&GQ.from===g.account){cg.saved=r2((+cg.saved||0)+amt);cfgCh=true;
       const al=acctAlloc(accounts().find(a=>a.name===g.account)||{},bal);if(amt>al.free+0.005){GQ.err=`Only ${money0(al.free)} in ${g.account} isn't set aside yet. Move money in from another account instead.`;return drawGoalQuick()}}
     else{if(!GQ.from){GQ.err="Choose where the money is coming from.";return drawGoalQuick()}tx={date:GQ.date,account:GQ.from,type:"Transfer",category:"Transfer",desc:g.name,amount:amt,to:g.account,person:"",created:Date.now()};if(w==="part")tx.goal=g.id}
-    msg=`Added ${money0(amt)} to ${g.name}`}
+    msg=`Added ${money0(amt)} to ${g.name}`;
+    if(GQ.date<=today()&&goalJustReached(have,+g.target||0,amt)){reached=true;msg=`${g.name}: goal reached!`}}
   else{const cat=GQ.cat||g.cat||goalCatGuess(g.name);
     if(w==="else"){cg.saved=r2(Math.max(0,(+cg.saved||0)-amt));cfgCh=true;if(GQ.payFrom)tx={date:GQ.date,account:GQ.payFrom,type:"Expense",category:cat,desc:GQ.desc||g.name,amount:amt,to:"",person:"",created:Date.now(),goalUse:true,goalName:g.name}}
     else tx={date:GQ.date,account:g.account,type:"Expense",category:cat,desc:GQ.desc||g.name,amount:amt,to:"",person:"",created:Date.now(),goal:w==="part"?g.id:"",goalUse:true,goalName:g.name};
@@ -2731,7 +2734,7 @@ async function saveGoalQuick(){readGoalQuick();const gi=(S.cfg.goals||[]).findIn
   if(GQ.mode==="spend"&&GQ.done){c.doneGoals=(c.doneGoals||[]).concat([{id:g.id,name:g.name,target:+g.target||0,done:GQ.date,spent:amt,cat:GQ.cat}]);c.goals=c.goals.filter(x=>x.id!==g.id);cfgCh=true;msg=`${g.name} is done. Nice work!`}
   GQ.busy=true;drawGoalQuick();
   try{if(tx)await S.db.collection("tx").add(tx);if(cfgCh){if(S.draft){S.draft.goals=JSON.parse(JSON.stringify(c.goals));S.draft.doneGoals=c.doneGoals;S.draft.categories=JSON.parse(JSON.stringify(c.categories))}await S.db.doc("app/config").set(c)}
-    GQ=null;clearSheet();toast(msg)}catch(err){GQ.busy=false;GQ.err=dbMsg(err);drawGoalQuick()}}
+    GQ=null;clearSheet();toast(msg);buzz(reached?[20,60,20]:10);if(reached)celebrate()}catch(err){GQ.busy=false;GQ.err=dbMsg(err);drawGoalQuick()}}
 let G=null;
 function openGoal(i){const g=i!=null?(S.cfg.goals||[])[i]:null;
   const sv=accounts().find(a=>a.kind==="savings");
@@ -3761,6 +3764,7 @@ async function saveTx(again){
   try{
     if(F.id)await S.db.doc("tx/"+F.id).set(data);else await S.db.collection("tx").add(data);
     if(!F.id)LS.set("mt.txdraft",null);
+    buzz();
     if(linked){const key=linked.key,cr=data.created;toastUndo(`Saved as the ${linked.r.desc} payment due ${shortDate(linked.d)}`,async()=>{const x=S.tx.find(y=>y.rec===key&&y.created===cr);if(!x)return;const o=Object.assign({},x);delete o.rec;delete o.id;await S.db.doc("tx/"+x.id).set(o);return"Unlinked. The bill is still due"})}
     else toast(F.id?"Changes saved":"Saved");
     if(again){const keep={type:t,account:F.account,date:F.date};openTx(keep)}else{F=null;drawSheet()}
@@ -4283,6 +4287,13 @@ function swEnd(e){if(!SW||e.pointerId!==SW.id)return;const s=SW;SW=null;if(!s.on
   }else{s.fg.style.transition="transform .2s ease";s.fg.style.transform="";setTimeout(()=>{s.w.classList.remove("moving","armed");const b=s.w.querySelector(".swipe-lbl b");if(b)b.textContent=s.w.dataset.kind==="skip"?"Skip":"Delete"},200)}}
 document.addEventListener("pointerup",swEnd);document.addEventListener("pointercancel",swEnd);
 
+/* A small tap of feedback where the browser supports it (Android does, iPhone browsers don't). */
+function buzz(p=10){try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}}
+/* True only when this amount is what takes a goal to its target, so a goal already reached doesn't celebrate again. */
+function goalJustReached(have,target,amt){return target>0&&amt>0&&have<target-0.005&&have+amt>=target-0.005}
+function celebrate(){const cols=["var(--accent)","var(--c2)","var(--c3)","var(--c4)"],el=document.createElement("div");el.className="cfburst";el.setAttribute("aria-hidden","true");
+  el.innerHTML=Array.from({length:14},(_,i)=>`<i class="cf" style="--x:${(4+i*6.8).toFixed(1)}%;--c:${cols[i%4]};--d:${(i%5)*90}ms"></i>`).join("");
+  document.body.appendChild(el);setTimeout(()=>el.remove(),2200)}
 let tt=0;function toast(m){const h=$("#toastHost");h.innerHTML=`<div class="toast" role="status">${esc(m)}</div>`;clearTimeout(tt);tt=setTimeout(()=>h.innerHTML="",1800)}
 
 /* ---------- events ---------- */
