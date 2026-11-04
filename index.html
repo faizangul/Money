@@ -301,7 +301,35 @@ document.addEventListener("change",e=>{if(e.target.id==="mtfile"&&e.target.files
 window.__mt={card,nudge,firstRun,eraseAll,secret,bio,notify,ready:secretsReady};
 /* the database waits for the PIN settings, so the lock screen is up before any data shows */
 window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n==="downloads"?downloads:null};
-if("serviceWorker" in navigator&&location.protocol==="https:"){window.addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}))}
+if("serviceWorker" in navigator&&location.protocol==="https:"){
+/* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
+   The page never reloads by itself, because someone could be halfway through an entry. */
+const BUILD=56;
+const offerUpdate=async()=>{
+  if(document.getElementById("updbar"))return;
+  let v=0;
+  try{for(const k of await caches.keys()){const m=/^money-tracker-v(\d+)$/.exec(k);if(m)v=Math.max(v,+m[1])}}catch(e){return}
+  if(v<=BUILD)return;
+  /* already refreshed for this version and still on the old page: don't ask again this session */
+  try{if(sessionStorage.getItem("mt.update.tried")===String(v))return}catch(e){}
+  const bar=document.createElement("div");bar.id="updbar";bar.setAttribute("role","status");
+  bar.innerHTML='<span>Update ready</span><button type="button" class="go">Refresh</button><button type="button" class="x" aria-label="Not now">×</button>';
+  bar.querySelector(".go").onclick=()=>{try{sessionStorage.setItem("mt.update.tried",String(v))}catch(e){}location.reload()};
+  bar.querySelector(".x").onclick=()=>bar.remove();
+  document.body.appendChild(bar);
+};
+window.addEventListener("load",()=>{
+  navigator.serviceWorker.addEventListener("controllerchange",offerUpdate);
+  navigator.serviceWorker.register("./sw.js").then(reg=>{
+    offerUpdate();
+    /* a Home Screen app can resume for days without loading again, so look for updates when it comes back */
+    let checked=Date.now();
+    document.addEventListener("visibilitychange",()=>{
+      if(document.visibilityState==="visible"&&Date.now()-checked>300000){checked=Date.now();reg.update().catch(()=>{})}
+    });
+  }).catch(()=>{});
+});
+}
 })();
 </script>
 </head>
@@ -933,6 +961,10 @@ details.more[open] summary{margin-bottom:10px}
 #backhint svg{width:22px;height:22px}
 #backhint.ready{transform:scale(1.08)}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(92px + env(safe-area-inset-bottom,0px));z-index:50;background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-weight:600;font-size:14px}
+#updbar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:35;display:flex;align-items:center;gap:6px;white-space:nowrap;background:var(--ink);color:var(--bg);padding:4px 4px 4px 16px;border-radius:999px;font-weight:600;font-size:14px}
+#updbar button{border:0;background:none;color:inherit;font:inherit;min-height:36px;cursor:pointer}
+#updbar .go{font-weight:700;text-decoration:underline;text-underline-offset:3px;padding:0 8px}
+#updbar .x{width:36px;padding:0;font-size:16px}
 
 .empty{text-align:center;padding:28px 12px}
 .empty h2{font-family:var(--display);font-size:20px;margin:0 0 6px}

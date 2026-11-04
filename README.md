@@ -12,7 +12,7 @@ The web app lives at the repository root so GitHub Pages keeps serving it from `
 | --- | --- |
 | `index.html` | The whole app: markup, styles and script in one file (fonts are embedded). The first `<script>` is the on-device store: SQLite in the iOS app, localStorage in a browser |
 | `pdf.min.js`, `pdf.worker.min.js` | Mozilla pdf.js 3.11.174, loaded only when a PDF statement is imported |
-| `manifest.webmanifest`, `icon-*.png`, `sw.js` | Home Screen install files for the web version (`sw.js` isn't used in the iOS app) |
+| `manifest.webmanifest`, `icon-*.png`, `sw.js` | Home Screen install files for the web version (`sw.js` isn't used in the iOS app). On each web release, raise `CACHE` in `sw.js` and `BUILD` in `index.html` together, so people see "Update ready" |
 | `capacitor.config.json` | Capacitor settings, app ID `com.faizangul.moneytracker` |
 | `scripts/build-web.mjs` | Copies the web files into `www/` (generated, not committed) for Capacitor |
 | `ios/` | The Xcode project. `ios/App/App/MoneyStorePlugin.swift` is the native SQLite store |
