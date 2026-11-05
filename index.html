@@ -304,7 +304,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=56;
+const BUILD=57;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -407,7 +407,7 @@ header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;backgroun
 header.top h1{font-family:var(--display);font-weight:700;font-size:22px;letter-spacing:-.01em;margin:0;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .monthsw{display:flex;align-items:center;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:3px}
 .monthsw button{border:0;background:none;width:30px;height:30px;border-radius:50%;font-size:18px;line-height:1;color:var(--muted)}
-.monthsw button:hover{background:var(--sunk);color:var(--ink)}
+@media (hover:hover) and (pointer:fine){.monthsw button:hover{background:var(--sunk);color:var(--ink)}}
 .monthsw button:disabled{opacity:.3;cursor:default}
 .monthsw span{font-weight:600;font-size:14px;min-width:84px;text-align:center}
 
@@ -442,7 +442,7 @@ main{display:flex;flex-direction:column;gap:14px}
 .row.total{font-weight:700}
 .row.total .main{font-weight:700}
 .tx{cursor:pointer;background:none;border-left:0;border-right:0;border-bottom:0;width:100%;text-align:left;padding-inline:0}
-.tx:hover .t{color:var(--accent)}
+@media (hover:hover) and (pointer:fine){.tx:hover .t{color:var(--accent)}}
 .daylabel{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:14px 2px 6px;display:flex;justify-content:space-between}
 
 .pill{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;background:var(--sunk);color:var(--muted);white-space:nowrap}
@@ -451,7 +451,7 @@ main{display:flex;flex-direction:column;gap:14px}
 .pill.ok{background:var(--accent-soft);color:var(--accent)}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:8px 14px;font-weight:600;font-size:14px}
-.btn:hover{border-color:var(--accent)}
+@media (hover:hover) and (pointer:fine){.btn:hover{border-color:var(--accent)}}
 .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .btn.danger{color:var(--neg);border-color:var(--neg-soft)}
 .btn.danger.armed{background:var(--neg);color:#fff;border-color:var(--neg)}
@@ -693,7 +693,7 @@ input[type=date].inp::-webkit-datetime-edit,input[type=time].inp::-webkit-dateti
 .swipe.armed .swipe-lbl{transform:scale(1.08)}
 .swipe.armed .swipe-bg{background:color-mix(in srgb,var(--neg) 85%,#000)}
 .swipe[data-kind="skip"].armed .swipe-bg{background:color-mix(in srgb,var(--warn) 85%,#000)}
-.swipe-fg{position:relative;background:var(--surface);touch-action:pan-y;will-change:transform}
+.swipe-fg{position:relative;background:var(--surface);touch-action:pan-y pinch-zoom;will-change:transform}
 .swipe.moving .swipe-fg{user-select:none;-webkit-user-select:none}
 .rows>.swipe{border-top:1px solid var(--line)}
 .rows>.swipe:first-child{border-top:0}
@@ -956,8 +956,15 @@ details.more[open] summary{margin-bottom:10px}
 .gsum span{display:inline-flex;align-items:center;gap:6px}
 #backbtn{margin-left:-4px}
 #backbtn svg{width:20px;height:20px}
-.wrap{touch-action:pan-y}
-.chips,.slides,.scrollx{touch-action:pan-x pan-y}
+/* Phone feel. pinch-zoom stays allowed everywhere people read: some need it to see the numbers. */
+.wrap{touch-action:pan-y pinch-zoom}
+.chips,.slides,.scrollx{touch-action:pan-x pan-y pinch-zoom}
+html{-webkit-tap-highlight-color:transparent;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+html,body{overscroll-behavior:none}
+button,a,summary,[role="button"]{touch-action:manipulation}
+button,summary,[role="button"]{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+button:not(:disabled,.btn,.chip,.card,.row,.setrow,.gcard,.swatch,.wopt,.gqtap,.fanitem,nav.tabs button,.pinpad button):active{opacity:.7}
+@media (pointer:coarse){.imsel,#nd3{font-size:16px}}
 .wrap.backing{transition:none}
 #backhint{position:fixed;left:calc(10px + env(safe-area-inset-left,0px));top:50%;width:44px;height:44px;margin-top:-22px;border-radius:50%;background:var(--ink);color:var(--bg);display:grid;place-items:center;z-index:35;opacity:0;transform:scale(.6);pointer-events:none;transition:opacity .12s,transform .12s}
 #backhint svg{width:22px;height:22px}
@@ -1610,6 +1617,8 @@ function applyLook(look){
   look=Object.assign({mode:"system",palette:"eucalyptus"},look||{});S.look=look;
   const r=document.documentElement,dk=isDark(look.mode);
   r.setAttribute("data-pal",PALETTES.some(p=>p[0]===look.palette)?look.palette:"eucalyptus");r.setAttribute("data-scheme",dk?"dark":"light");
+  /* the status bar follows the app's own light/dark switch, not only the phone's setting */
+  try{const bg=getComputedStyle(r).getPropertyValue("--bg").trim();if(bg)document.querySelectorAll('meta[name="theme-color"]').forEach(m=>m.setAttribute("content",bg))}catch(e){}
   try{localStorage.setItem("mt.look",JSON.stringify(look))}catch(e){}
   const b=$("#themebtn");if(b){b.innerHTML=dk?SUN:MOON;b.setAttribute("aria-label",dk?"Switch to light mode":"Switch to dark mode")}
 }

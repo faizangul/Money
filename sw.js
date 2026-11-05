@@ -1,5 +1,5 @@
 // On every release, raise this number and BUILD in index.html together: the page compares them to offer "Update ready".
-const CACHE="money-tracker-v56";
+const CACHE="money-tracker-v57";
 const WAIT=800;
 const FILES=["./","./index.html","./manifest.webmanifest","./icon-180.png","./icon-192.png","./icon-512.png"];
 self.addEventListener("install",e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(FILES.map(f=>new Request(f,{cache:"reload"})))));self.skipWaiting()});
