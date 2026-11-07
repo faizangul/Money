@@ -304,7 +304,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=58;
+const BUILD=59;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -1105,7 +1105,7 @@ const S={db:null,dl:null,cfg:null,cfgLoaded:false,tx:[],txLoaded:false,props:[],
 try{const v=localStorage.getItem("mt.view");if(v)S.view=v}catch(e){}
 if(/^#[a-z]+$/.test(location.hash))S.view=location.hash.slice(1);
 /* an account page needs to know which account; after a reload that's gone, so open Home instead */
-if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget","calendar","trips"].includes(S.view))S.view="home";
+if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget","calendar","trips","work"].includes(S.view))S.view="home";
 
 /* ---------- derived data ---------- */
 const cats=()=>S.cfg?S.cfg.categories:[];
@@ -1750,9 +1750,9 @@ let raf=0;
 function render(){if(raf)return;raf=requestAnimationFrame(()=>{raf=0;draw()})}
 function draw(){syncRegion();
   document.querySelectorAll("nav.tabs [data-go]").forEach(b=>{
-    const v=b.dataset.go;const on=v===S.view||(v==="home"&&S.view==="acct")||(v==="more"&&["people","trading","loans","settings","plan","tax","calendar","trips"].includes(S.view));
+    const v=b.dataset.go;const on=v===S.view||(v==="home"&&S.view==="acct")||(v==="more"&&["people","trading","loans","settings","plan","tax","calendar","trips","work"].includes(S.view));
     on?b.setAttribute("aria-current","page"):b.removeAttribute("aria-current")});
-  const titles={acct:S.acct||"Account",calendar:"Calendar",trips:"Trips",insights:"Insights",plan:"Money methods",home:"Money",activity:"Activity",budget:"Budget",more:"More",tax:"Tax time",people:feat("loans")?(feat("people")?"People and loans":"Loans"):"People",trading:"Prop trading",loans:"Loans",settings:S.sset?({accounts:"Accounts",budget:"Budget",bills:"Bills and pay",goals:"Goals",loans:"Loans",you:"Profile and look",reminders:"Reminders",track:"What to track",methods:"Money methods"}[S.sset]||"Settings"):"Settings"};
+  const titles={acct:S.acct||"Account",calendar:"Calendar",trips:"Trips",work:"Work and pay",insights:"Insights",plan:"Money methods",home:"Money",activity:"Activity",budget:"Budget",more:"More",tax:"Tax time",people:feat("loans")?(feat("people")?"People and loans":"Loans"):"People",trading:"Prop trading",loans:"Loans",settings:S.sset?({accounts:"Accounts",budget:"Budget",bills:"Bills and pay",goals:"Goals",loans:"Loans",you:"Profile and look",reminders:"Reminders",track:"What to track",methods:"Money methods"}[S.sset]||"Settings"):"Settings"};
   $("#ttl").textContent=titles[S.view]||"Money Tracker";
   {const bb=$("#backbtn");if(bb){const pv=S.hist.length?S.hist[S.hist.length-1]:null;bb.hidden=!pv;if(pv)bb.setAttribute("aria-label","Back to "+((titles[pv.view]||"previous screen").replace(/^Money$/,"Home")))}}
   if(S.view==="budget"){S.view="insights";S.itab="budget"}
@@ -1764,7 +1764,7 @@ function draw(){syncRegion();
   if(S.state==="error"){app.innerHTML=`<div class="card empty"><h2>Can't reach your data right now</h2><p class="muted">Nothing is lost. Check your connection, then try again.</p><p><button class="btn primary" data-act="retryload">Try again</button></p></div>`;return}
   if(S.state==="nodb"){app.innerHTML=`<div class="card empty"><h2>Couldn't open your data</h2><p class="muted">Money Tracker couldn't read its storage on this device. Close the app fully and open it again. Your data hasn't been deleted.</p></div>`;return}
   if(!S.cfg){app.innerHTML=vWelcome();return}
-  const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct,calendar:vCal,trips:vTrips}[S.view]||vHome;
+  const v={home:vHome,activity:vActivity,budget:vBudget,more:vMore,people:vPeople,trading:vTrading,loans:vLoans,settings:vSettings,plan:vPlan,tax:vTax,insights:vInsights,budget:vInsights,acct:vAcct,calendar:vCal,trips:vTrips,work:vWork}[S.view]||vHome;
   const vkey=[S.view,S.view==="insights"?S.itab:"",S.acct||"",S.sset||""].join("|"),mkey=vkey+"|"+S.month,prevTab=S._vkey&&S._vkey.split("|")[0]===S.view&&S.view==="insights"?S._vkey.split("|")[1]:null;
   const pillFrom=(()=>{const t=document.querySelector("#app .subtabs .pill");return t?{x:t.style.transform,w:t.style.width,k:t.dataset.k}:null})();
   app.innerHTML=(S.demo?`<div class="demobar" role="status"><p><b>Sample data.</b> Explore freely, nothing here is saved.</p><button class="btn sm" data-act="demoexit">Exit</button></div>`:"")+v();
@@ -2052,6 +2052,303 @@ async function tripSave(){const g=id=>{const e=$(id);return e?e.value:""};TR.nam
   const name=TR.name.trim(),b=String(TR.budget).trim()===""?0:parseAmt(TR.budget);
   TR.err=tripErr(name,TR.start,TR.end,b,trips());if(TR.err){render();return}
   try{await saveTrips(l=>[...l,{id:"trip"+Date.now().toString(36),name,start:TR.start,end:TR.end,budget:r2(b)}]);TR=null;toast(`${name} added`);render()}catch(e){TR.err=dbMsg(e);render()}}
+/* ---------- work: shifts, pay rates, expected pay for the year, tax refund estimate, student visa hours ----------
+   Everything lives in cfg.work (saved settings), so it goes into backups with everything else. Nothing here creates
+   transactions: the pay that lands in the bank is still logged as Income, so budgets don't count it twice. */
+const WK_CHANGE=["Started late","Finished early","Stayed back","Started early","Roster changed","Swapped shift","Other"];
+const WK_OFF=["Sick","Uni","Shift cancelled","Personal","Swapped away","Other"];
+const WK_TIERS=[["ord","Ordinary"],["early","Early morning"],["eve","Evening"],["sat","Saturday"],["sun","Sunday"],["sunx","Sunday extra"],["ph","Public holiday"]];
+function wkDefaults(){return{rates:{ord:"",early:"",earlyBefore:"07:00",eve:"",eveAfter:"18:00",sat:"",sun:"",sunx:"",sunxH:2,ph:""},
+  brk:{paid:30,unpaid:30,minH:5},shifts:[],slips:[],study:[],visa:{on:false,cap:48},medicare:true}}
+function work(src){const w=src||(S.cfg&&S.cfg.work)||{},d=wkDefaults();
+  return Object.assign({},d,w,{rates:Object.assign({},d.rates,w.rates||{}),brk:Object.assign({},d.brk,w.brk||{}),visa:Object.assign({},d.visa,w.visa||{}),
+    shifts:w.shifts||[],slips:w.slips||[],study:w.study||[]})}
+const hm=s=>{const m=/^(\d{1,2}):(\d{2})/.exec(s||"");return m&&+m[1]<24&&+m[2]<60?(+m[1])*60+(+m[2]):null};
+const dowOf=iso=>new Date(iso+"T00:00:00Z").getUTCDay();
+const monOf=iso=>addDays(iso,-((dowOf(iso)+6)%7));
+const DOW=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function fmtT(s){const m=hm(s);if(m==null)return"";let H=Math.floor(m/60),M=m%60;const ap=H<12?"am":"pm";H=H%12||12;return H+(M?":"+String(M).padStart(2,"0"):"")+" "+ap}
+const wkRate=(w,k)=>+(w.rates[k])||0;
+/* what one shift pays: minutes sorted into rate tiers, the unpaid break taken out, then hours rounded to 2 places and
+   each line to the cent, the way payslips do it. Public holiday beats the day of the week, which beats the time of day. */
+function shiftPay(sh,w){w=w||work();const R=w.rates,rate=k=>wkRate(w,k);
+  const s=hm(sh.start),e0=hm(sh.end);if(sh.off||s==null||e0==null)return{h:0,mins:0,pay:0,lines:[]};
+  const e=e0<=s?e0+1440:e0,d=dowOf(sh.date),eb=hm(R.earlyBefore),ea=hm(R.eveAfter);
+  const kind=m=>{const t=m%1440;if(sh.ph&&rate("ph"))return"ph";if(d===6&&rate("sat"))return"sat";if(d===0&&rate("sun"))return"sun";
+    if(rate("early")&&eb!=null&&t<eb)return"early";if(rate("eve")&&ea!=null&&t>=ea)return"eve";return"ord"};
+  const mins={};for(let m=s;m<e;m++){const k=kind(m);mins[k]=(mins[k]||0)+1}
+  const span=e-s,own=sh.brk!=null&&String(sh.brk).trim()!=="";
+  let left=Math.min(span,own?Math.max(0,+sh.brk||0):span>=(+w.brk.minH||0)*60?Math.max(0,+w.brk.unpaid||0):0);
+  const at=hm(sh.brkAt);
+  if(left&&at!=null){let a=at<s?at+1440:at;for(let m=a;m<a+left;m++)if(m>=s&&m<e)mins[kind(m)]--;left=0}
+  /* no break time given: it comes out of the lowest-paid time, as payslips show */
+  if(left)for(const k of Object.keys(mins).sort((x,y)=>rate(x)-rate(y))){const n=Math.min(left,mins[k]);mins[k]-=n;left-=n;if(!left)break}
+  if(mins.sun&&rate("sunx")){const x=Math.min(mins.sun,Math.round((+R.sunxH||0)*60));mins.sun-=x;mins.sunx=x}
+  const lines=[];let total=0,pay=0;
+  for(const [k,label] of WK_TIERS){const n=mins[k]||0;if(n<=0)continue;total+=n;const h=r2(n/60),amt=r2(h*rate(k));pay+=amt;lines.push({k,label,h,rate:rate(k),amt})}
+  return{h:r2(total/60),mins:total,pay:r2(pay),lines}}
+/* ---------- tax: Australian resident rates by financial year (the key is the year it starts) ---------- */
+const TAXT={
+  2024:{r:[[18200,0],[45000,.16],[135000,.30],[190000,.37],[Infinity,.45]],ml:[27222,34027]},
+  2025:{r:[[18200,0],[45000,.16],[135000,.30],[190000,.37],[Infinity,.45]],ml:[28011,35013]},
+  2026:{r:[[18200,0],[45000,.15],[135000,.30],[190000,.37],[Infinity,.45]],ml:[28011,35013],mlFrom:2025},
+  2027:{r:[[18200,0],[45000,.14],[135000,.30],[190000,.37],[Infinity,.45]],ml:[28011,35013],mlFrom:2025}};
+function taxTable(y){const ks=Object.keys(TAXT).map(Number),k=Math.min(Math.max(y,ks[0]),ks[ks.length-1]);return Object.assign({y:k},TAXT[k])}
+function lito(inc){return inc<=37500?700:inc<=45000?700-.05*(inc-37500):Math.max(0,325-.015*(inc-45000))}
+/* income tax after the low income tax offset, plus the Medicare levy (phased in above the low-income threshold) */
+function taxParts(income,y,medicare){const T=taxTable(y),inc=Math.max(0,Math.floor(+income||0));let base=0,lo=0;
+  for(const [top,rate] of T.r){if(inc>lo)base+=(Math.min(inc,top)-lo)*rate;lo=top}
+  const off=Math.min(base,lito(inc)),tax=r2(base-off),[l]=T.ml,levy=medicare===false||inc<=l?0:r2(Math.min(.02*inc,.1*(inc-l)));
+  return{base:r2(base),offset:r2(off),tax,levy,total:r2(tax+levy)}}
+const taxOn=(i,y,m)=>taxParts(i,y,m).total;
+const fyOf=d=>{const y=+d.slice(0,4);return +d.slice(5,7)>=7?y:y-1};
+const fyLabel=y=>`${y}–${String(y+1).slice(2)}`;
+/* PAYG withholding, ATO Schedule 1 scale 2 (tax-free threshold claimed), weekly coefficients from 1 July 2026:
+   y = a·x − b where x is whole weekly dollars + 99c, rounded to the dollar. A fortnight is worked out as a week, doubled. */
+const PAYG2=[[362,0,0],[538,.15,54.3462],[673,.25,108.2135],[721,.17,54.3473],[865,.179,60.8377],[1282,.3227,185.1935],[2596,.32,181.7319],[3653,.39,363.4627],[Infinity,.47,655.7704]];
+function withhold(gross,days){const wks=(days||14)/7,x=Math.floor((+gross||0)/wks)+.99;if(!(gross>0))return 0;
+  const [,a,b]=PAYG2.find(r=>x<r[0]);return Math.max(0,Math.round(a*x-b))*wks}
+const dBetween=(a,b)=>Math.round((Date.parse(b+"T00:00:00Z")-Date.parse(a+"T00:00:00Z"))/864e5);
+/* the pay cycle: set in pay settings, or read off the latest payslip, or assumed fortnightly paid 3 days after */
+function wkSched(w){w=w||work();const p=w.pay||{};
+  if(ISO.test(p.anchor||""))return{len:+p.len===7?7:14,anchor:p.anchor,lag:Math.max(0,+p.lag||0),src:"set"};
+  const sl=w.slips.filter(s=>s.from&&s.to).sort((a,b)=>b.to.localeCompare(a.to))[0];
+  if(sl){const n=daysIncl(sl.from,sl.to);return{len:n<=10?7:14,anchor:sl.from,lag:Math.max(0,dBetween(sl.to,sl.payDate)),src:"slip"}}
+  return{len:14,anchor:monOf(today()),lag:3,src:"assumed"}}
+/* every pay period whose pay day falls between two dates */
+function wkPeriods(sc,from,to){const out=[];let k=Math.floor((dBetween(sc.anchor,from)-sc.lag-sc.len)/sc.len)-1;
+  for(;;k++){const a=addDays(sc.anchor,k*sc.len),b=addDays(a,sc.len-1),pay=addDays(b,sc.lag);if(pay>to)break;if(pay>=from)out.push({from:a,to:b,pay})}return out}
+/* the year as pay days: a payslip where there is one, otherwise the shifts in the period, with the rest of the year at
+   the recent weekly average (weeks off count as zero). Tax counts in the year a pay day falls in. */
+function wkYear(w,t){w=w||work();t=t||today();const y=fyOf(t),from=y+"-07-01",to=(y+1)+"-06-30",sc=wkSched(w);
+  const on=w.shifts.filter(s=>!s.off),pay=s=>shiftPay(s,w).pay,lastRost=on.reduce((m,s)=>s.date>m?s.date:m,t);
+  /* recent weekly average over up to 8 weeks: payslips for the days they cover, logged shifts for the rest */
+  const starts=on.map(s=>s.date).concat(w.slips.filter(s=>s.from).map(s=>s.from)).filter(d=>d<=t).sort(),win=addDays(t,-55);let avg=0,basis="";
+  const covered=d=>w.slips.some(sl=>sl.from&&sl.to&&d>=sl.from&&d<=sl.to);
+  if(starts.length){const st=starts[0]>win?starts[0]:win,days=daysIncl(st,t);let sum=0;
+    for(const sl of w.slips){if(!sl.from||!sl.to)continue;const a=sl.from>st?sl.from:st,b=sl.to<t?sl.to:t;if(a<=b)sum+=(+sl.gross||0)*daysIncl(a,b)/daysIncl(sl.from,sl.to)}
+    for(const sh of on)if(sh.date>=st&&sh.date<=t&&!covered(sh.date))sum+=pay(sh);
+    avg=sum/days*7;const wk=Math.max(1,Math.round(days/7));basis=`your pay over the last ${wk} week${wk===1?"":"s"}`}
+  const used=new Set(),rows=[],sum={slip:0,slipT:0,nos:0,owed:0,rost:0,trend:0};let trendDays=0;
+  for(const p of wkPeriods(sc,from,to)){
+    const sl=w.slips.find(s=>!used.has(s.id)&&(s.from===p.from||(s.to&&s.to>=p.from&&s.to<=p.to)));
+    if(sl){used.add(sl.id);const g=+sl.gross||0,x=+sl.tax||0;sum.slip+=g;sum.slipT+=x;
+      rows.push(Object.assign({},p,{pay:sl.payDate,state:"paid",gross:r2(g),tax:r2(x),done:r2(g),doneTax:r2(x),slip:sl.id,exp:r2(on.filter(s=>s.date>=p.from&&s.date<=p.to).reduce((a,s)=>a+pay(s),0)),hrs:0}));continue}
+    let done=0,ahead=0,est=0,mins=0;
+    for(const s of on)if(s.date>=p.from&&s.date<=p.to){const q=shiftPay(s,w);mins+=q.mins;if(s.date<=t)done+=q.pay;else ahead+=q.pay}
+    const rest=[p.from,addDays(lastRost,1)].sort()[1],n=rest>p.to?0:daysIncl(rest,p.to);if(n>0&&p.to>t){est=avg/7*n;trendDays+=n}
+    const g=r2(done+ahead+est),past=p.pay<=t;
+    if(past)sum.nos+=done;else{sum.owed+=done;sum.rost+=ahead;sum.trend+=est}
+    rows.push(Object.assign({},p,{state:past?"noslip":"due",gross:g,tax:withhold(g,sc.len),done:r2(done),doneTax:withhold(done,sc.len),est:r2(est),hrs:r2(mins/60)}))}
+  /* payslips in the year that don't line up with a pay period still count */
+  for(const sl of w.slips)if(!used.has(sl.id)&&sl.payDate>=from&&sl.payDate<=to){const g=+sl.gross||0,x=+sl.tax||0;sum.slip+=g;sum.slipT+=x;
+    rows.push({from:sl.from||sl.payDate,to:sl.to||sl.payDate,pay:sl.payDate,state:"paid",gross:r2(g),tax:r2(x),done:r2(g),doneTax:r2(x),slip:sl.id,exp:0,hrs:0})}
+  rows.sort((a,b)=>a.pay.localeCompare(b.pay));
+  const paidT=r2(sum.slipT),annual=r2(rows.reduce((a,r)=>a+r.gross,0)),earned=r2(rows.reduce((a,r)=>a+r.done,0)),med=w.medicare!==false;
+  const qW=r2(rows.reduce((a,r)=>a+r.doneTax,0)),kW=r2(rows.reduce((a,r)=>a+r.tax,0)),qt=taxParts(earned,y,med),kt=taxParts(annual,y,med);
+  const quit={income:earned,withheld:qW,tax:qt,refund:r2(qW-qt.total)},keep={income:annual,withheld:kW,tax:kt,refund:r2(kW-kt.total)};
+  return{y,from,to,sched:sc,rows,paidG:r2(sum.slip),paidT,nos:r2(sum.nos),owed:r2(sum.owed),rost:r2(sum.rost),trend:r2(sum.trend),avg:r2(avg),basis,
+    weeksLeft:Math.round(trendDays/7),earned,annual,quit,keep,next:rows.find(r=>r.pay>=t&&r.state!=="paid")||null,slips:used.size}}
+/* ---------- student visa: hours in any 14 days starting on a Monday, while a study period is on ---------- */
+const inStudy=(d,w)=>w.study.some(p=>p.start&&p.end&&d>=p.start&&d<=p.end);
+function visaWin(mon,w){const end=addDays(mon,13);let study=false,mins=0;
+  for(let i=0;i<14&&!study;i++)if(inStudy(addDays(mon,i),w))study=true;
+  for(const s of w.shifts)if(!s.off&&s.date>=mon&&s.date<=end)mins+=shiftPay(s,w).mins;
+  return{from:mon,to:end,study,h:r2(mins/60)}}
+/* the two fortnights a date falls in; the one with the most hours that's in a study period */
+function visaFor(d,w){w=w||work();const m=monOf(d),ws=[visaWin(addDays(m,-7),w),visaWin(m,w)].filter(x=>x.study);
+  return ws.sort((a,b)=>b.h-a.h)[0]||null}
+
+/* ---------- the Work screen ---------- */
+let WK=null;/* the open form: {f:"shift"|"slip"|"setup", ...its fields, err} */
+async function saveWork(fn){const c=JSON.parse(JSON.stringify(S.cfg)),w=JSON.parse(JSON.stringify(work()));fn(w);c.work=w;
+  await S.db.doc("app/config").set(c);if(S.draft){S.draft.work=JSON.parse(JSON.stringify(w));if(S.draftDirty)LS.set("mt.sdraft",S.draft)}}
+const wkId=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+const refundTxt=r=>r>=0.5?`<b class="num">About ${money0(r)} back</b>`:r<=-0.5?`<b class="num neg">About ${money0(-r)} to pay</b>`:`<b class="num">About even</b>`;
+function shiftLine(s){return `${DOW[dowOf(s.date)]} ${esc(shortDate(s.date))}`}
+function vWork(){const w=work(),t=today(),au=AU(),ready=wkRate(w,"ord")>0;
+  if(WK&&WK.f==="setup")return wkSetupForm(w);
+  let h="";
+  if(!ready)h+=`<section class="card"><div class="head"><h2>Set up your pay</h2></div><p class="small muted" style="margin:0 0 10px">Add your hourly rates from a payslip. Then log your shifts to see what you'll earn this year${au?" and how much tax you might get back":""}.</p><button class="btn primary" data-act="wksetup">Add pay rates</button></section>`;
+  else h+=wkYearCard(w,t,au);
+  if(au&&w.visa.on)h+=wkVisaCard(w,t);
+  if(ready)h+=wkShiftsCard(w,t);
+  h+=wkPayCard(w,t,au);
+  if(ready)h+=`<section class="card"><div class="head"><h2>Pay rates${au?" and visa":""}</h2></div>
+    ${WK_TIERS.filter(([k])=>wkRate(w,k)).map(([k,l])=>`<div class="kv"><span>${l}${k==="early"?` (before ${fmtT(w.rates.earlyBefore)})`:k==="eve"?` (from ${fmtT(w.rates.eveAfter)})`:k==="sunx"?` (${+w.rates.sunxH} h)`:""}</span><b class="num">$${wkRate(w,k)}/h</b></div>`).join("")}
+    <div class="kv"><span>Breaks</span><b>${+w.brk.paid||0} min paid · ${+w.brk.unpaid||0} min unpaid</b></div>
+    <button class="btn" data-act="wksetup" style="margin-top:10px">Edit pay rates${au?" and visa":""}</button></section>`;
+  h+=wkDisclaimer(au);
+  return h}
+function wkYearCard(w,t,au){const Y=wkYear(w,t),q=Y.quit,k=Y.keep,T=taxTable(Y.y);
+  let h=`<section class="card"><div class="head"><h2>This financial year</h2><span class="small muted">${fyLabel(Y.y)}</span></div>
+    <div class="stats num"><div class="stat"><small>Expected for the year</small><b>${money0(Y.annual)}</b></div><div class="stat"><small>Earned so far</small><b>${money0(Y.earned)}</b></div></div>
+    <details class="more"><summary>How it's worked out ›</summary>
+      <div class="kv"><span>On payslips</span><b class="num">${money(Y.paidG)}</b></div>
+      ${Y.nos?`<div class="kv"><span>Paid, payslip not added</span><b class="num">${money(Y.nos)}</b></div>`:""}
+      <div class="kv"><span>Worked, not paid yet</span><b class="num">${money(Y.owed)}</b></div>
+      <div class="kv"><span>Rostered</span><b class="num">${money(Y.rost)}</b></div>
+      <div class="kv"><span>About ${Y.weeksLeft} more week${Y.weeksLeft===1?"":"s"} at ${money0(Y.avg)} a week</span><b class="num">${money(Y.trend)}</b></div>
+      <p class="small muted" style="margin:8px 0 0">Before tax, counted by pay day. ${Y.basis?`The weekly figure is the average of ${Y.basis}, counting weeks you didn't work.`:"Log a few weeks of shifts, or add a payslip, to estimate the rest of the year."}</p></details>`;
+  if(au)h+=`<div class="kv" style="margin-top:10px"><span>Tax taken out so far</span><b class="num">${money(Y.paidT)}</b></div>
+      <div class="kv"><span>Tax expected to be taken out this year</span><b class="num">${money(k.withheld)}</b></div>
+      <div class="kv"><span>If you stopped working today</span>${refundTxt(q.refund)}</div>
+      <div class="kv"><span>If you keep working like this</span>${refundTxt(k.refund)}</div>
+      <details class="more"><summary>The tax maths ›</summary>
+        <div class="kv"><span>Stop today: tax on ${money0(q.income)}</span><b class="num">${money(q.tax.total)}</b></div>
+        <div class="kv"><span>Stop today: tax taken out</span><b class="num">${money(q.withheld)}</b></div>
+        <div class="kv"><span>Keep going: tax on ${money0(k.income)}</span><b class="num">${money(k.tax.total)}</b></div>
+        <div class="kv"><span>Keep going: tax taken out</span><b class="num">${money(k.withheld)}</b></div>
+        <p class="small muted" style="margin:8px 0 0">Tax on income uses Australian resident rates for ${fyLabel(T.y)}, the low income tax offset${w.medicare!==false?`, and the Medicare levy${T.mlFrom?` (with the ${fyLabel(T.mlFrom)} low-income threshold, the latest published)`:""}`:", and no Medicare levy, as set in your pay settings"}. Tax taken out is from your payslips, and for pay not on a payslip yet, the ATO's 2026–27 withholding formula for someone who claimed the tax-free threshold.</p></details>
+      <p class="small muted" style="margin:8px 0 0">Estimates only. See the note at the bottom of this page.</p>`;
+  return h+`</section>`}
+/* the pay day log: the next pay day, then every pay day this year with its gross, tax and take-home pay */
+function wkPayCard(w,t,au){const form=WK&&WK.f==="slip"?wkSlipForm():"",Y=wkYear(w,t),n=Y.next,sc=Y.sched;
+  const span=r=>`${esc(shortDate(r.from))} – ${esc(shortDate(r.to))}`,day=d=>`${DOW[dowOf(d)]} ${esc(shortDate(d))}`;
+  let h=`<section class="card"><div class="head"><h2>Pay days</h2>${form?"":`<button class="btn sm" data-act="wkslipnew">Add payslip</button>`}</div>${form}`;
+  if(n)h+=`<div class="kv" style="border-top:0"><span><b>Next pay day: ${day(n.pay)}</b></span><span class="small muted">for ${span(n)}</span></div>
+    <div class="stats num" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><small>Before tax</small><b>${money0(n.gross)}</b></div><div class="stat"><small>Tax${au?" taken out":""}</small><b>${money0(au?n.tax:0)}</b></div><div class="stat"><small>In your account</small><b>${money0(n.gross-(au?n.tax:0))}</b></div></div>
+    <p class="small muted" style="margin:8px 0 0">${n.hrs?`${n.hrs} h of shifts logged or rostered`:"No shifts logged in this period yet"}${n.est?`, plus ${money0(n.est)} estimated from your average for days without a roster`:""}. ${n.to>=t?"It will change as you log shifts.":""}</p>`;
+  /* past pay days with nothing logged are left out, so the log starts when the work did */
+  const rows=Y.rows.slice().reverse().filter(r=>r.state==="paid"||(r.state==="noslip"?r.gross>0:r.pay<=addDays(t,42)));
+  const row=r=>{const net=r2(r.gross-(au?r.tax:0)),diff=r.state==="paid"&&r.exp?r2(r.gross-r.exp):0;
+    const pill=r.state==="paid"?`<span class="pill ok">Paid</span>`:r.state==="noslip"?`<span class="pill due">Add payslip</span>`:`<span class="pill">Expected</span>`;
+    const sub=`${span(r)}<br>${money(r.gross)} before tax${au?` · ${money(r.tax)} tax`:""} · ${money(net)} take-home${Math.abs(diff)>=0.01?`<br>${diff>0?money(diff)+" more":money(-diff)+" less"} than your shifts`:""}`;
+    return `<button class="row" ${r.slip?`data-act="wkslipedit" data-id="${esc(r.slip)}"`:`data-act="wkslipfor" data-f="${r.from}" data-t="${r.to}" data-p="${r.pay}"`}><div class="main"><div class="t">${day(r.pay)}</div><div class="s" style="white-space:normal">${sub}</div></div>${pill}<span class="chev">›</span></button>`};
+  h+=rows.length?`<details class="more"${n?"":" open"}><summary>Pay day log ›</summary><div class="rows menu">${rows.map(row).join("")}</div>
+    <p class="small muted" style="margin:8px 0 0">${sc.len===7?"Weekly":"Fortnightly"} pay, ${sc.lag} day${sc.lag===1?"":"s"} after each period ends${sc.src==="slip"?", read from your latest payslip":sc.src==="assumed"?" (assumed: set your pay cycle in pay settings)":""}. Tap a pay day to add or fix its payslip. Pay is logged as income when it lands in your account, so it isn't counted twice.</p></details>`
+    :`<p class="small muted" style="margin:8px 0 0">Add the gross pay and tax from each payslip to make the yearly figure and the tax estimate exact.</p>`;
+  return h+`</section>`}
+function wkDisclaimer(au){return `<section class="card"><div class="head"><h2>About these numbers</h2></div>
+  <p class="small muted" style="margin:0">Everything on this page is an estimate, worked out from the rates, shifts and payslips you enter. It isn't financial, tax or migration advice, and it can be wrong.</p>
+  ${au?`<p class="small muted" style="margin:8px 0 0">Your real pay, the tax taken out and any refund can differ because of allowances, back pay, rounding, rate changes, other income such as bank interest or another job, deductions, offsets, a HELP debt, your residency for tax purposes, and Medicare levy exemptions. Rates and formulas are for 2026–27 and change each year.</p>
+  <p class="small muted" style="margin:8px 0 0">Check your payslips and income statement in myGov, and ask the ATO or a registered tax agent before you rely on a refund. For visa work limits, check your visa conditions with the Department of Home Affairs.</p>`:`<p class="small muted" style="margin:8px 0 0">Check your payslips, and ask a tax professional before relying on any figure.</p>`}</section>`}
+function wkVisaCard(w,t){const v=visaFor(t,w),cap=+w.visa.cap||48,next=w.study.filter(p=>p.end>=t).sort((a,b)=>a.start.localeCompare(b.start))[0];
+  let h=`<section class="card"><div class="head"><h2>Student visa hours</h2><span class="small muted">${cap} h a fortnight in study periods</span></div>`;
+  if(!w.study.length)h+=`<p class="small muted" style="margin:0">Add your study periods in pay settings to track your limit.</p>`;
+  else if(!v)h+=`<p class="small" style="margin:0">No limit right now: you're not in a study period.${next?` ${esc(next.name||"The next one")} starts ${esc(shortDate(next.start))}.`:""}</p>`;
+  else{const pc=Math.min(100,Math.round(v.h/cap*100)),over=v.h>cap;
+    h+=`<div class="kv"><span>${esc(shortDate(v.from))} – ${esc(shortDate(v.to))}</span><b class="num${over?" neg":""}">${v.h} of ${cap} h</b></div>
+    <div class="tripbar" role="img" aria-label="${pc}% of the limit"><i style="width:${pc}%"${over?' class="over"':""}></i></div>
+    <p class="small muted" style="margin:8px 0 0">${over?`<b>Over the limit by ${r2(v.h-cap)} h.</b> Change a rostered shift if you can.`:`${r2(cap-v.h)} h left in this fortnight, rostered shifts included.`} Any 14 days starting on a Monday counts, so this shows the busier of the two fortnights you're in. Count hours at every job.</p>`}
+  return h+`</section>`}
+function wkShiftsCard(w,t){const form=WK&&WK.f==="shift"?wkShiftForm(w):"";
+  const shifts=w.shifts.slice().sort((a,b)=>b.date.localeCompare(a.date)||String(b.start).localeCompare(String(a.start)));
+  /* 8 weeks back (not before the first shift logged) and any rostered weeks ahead; weeks off in a row share one line */
+  const first=shifts.length?monOf(shifts[shifts.length-1].date):monOf(t),top=shifts.length&&shifts[0].date>t?monOf(shifts[0].date):monOf(t),stop=first>addDays(monOf(t),-49)?first:addDays(monOf(t),-49);
+  const head=(l,r)=>`<div class="kv" style="border-top:0;padding-bottom:2px"><span class="small muted">${l}</span><span class="small muted num">${r}</span></div>`;
+  let rows="",gap=null;const flush=()=>{if(gap){rows+=head(gap.a===gap.b?`Week of ${esc(shortDate(gap.a))}`:`Weeks of ${esc(shortDate(gap.a))} – ${esc(shortDate(gap.b))}`,"No shifts");gap=null}};
+  for(let m=top;m>=stop;m=addDays(m,-7)){const end=addDays(m,6),ws=shifts.filter(s=>s.date>=m&&s.date<=end).reverse();
+    if(!ws.length){gap=gap?{a:m,b:gap.b}:{a:m,b:m};continue}flush();
+    const tot=ws.reduce((a,s)=>{const p=shiftPay(s,w);a.h+=p.mins;a.pay+=p.pay;return a},{h:0,pay:0});
+    rows+=head(`Week of ${esc(shortDate(m))}`,`${r2(tot.h/60)} h · ${money(tot.pay)}`)+ws.map(s=>wkShiftRow(s,w,t)).join("")}
+  flush();
+  const older=shifts.filter(s=>s.date<stop);
+  return `<section class="card"><div class="head"><h2>Shifts</h2>${form?"":`<button class="btn sm primary" data-act="wknew">Add shift</button>`}</div>${form}
+    <div class="rows menu">${rows}</div>${older.length?`<details class="more"><summary>${older.length} older shift${older.length===1?"":"s"} ›</summary><div class="rows menu">${older.map(s=>wkShiftRow(s,w,t)).join("")}</div></details>`:""}</section>`}
+function wkShiftRow(s,w,t){const p=shiftPay(s,w),moved=s.pStart&&(s.pStart!==s.start||s.pEnd!==s.end),v=!s.off&&w.visa.on&&AU()?visaFor(s.date,w):null,over=v&&v.h>(+w.visa.cap||48);
+  const sub=s.off?`Didn't work${s.reason?" · "+esc(s.reason):""}`:`${p.h} h · ${money(p.pay)}${moved?` · was ${fmtT(s.pStart)} – ${fmtT(s.pEnd)}`:""}${s.reason&&moved?" · "+esc(s.reason):""}`;
+  return `<button class="row" data-act="wkedit" data-id="${esc(s.id)}"><div class="main"><div class="t">${shiftLine(s)} · ${s.off?"<s>":""}${fmtT(s.start)} – ${fmtT(s.end)}${s.off?"</s>":""}</div><div class="s">${sub}${s.note?" · "+esc(s.note):""}</div></div>
+    ${over?`<span class="pill over">Over visa limit</span>`:s.date>t&&!s.off?`<span class="pill">Rostered</span>`:s.ph?`<span class="pill ok">Public hol</span>`:""}<span class="chev">›</span></button>`}
+function wkPreview(w){const f=WK;if(!f||f.f!=="shift")return"";
+  const prev=!f.off&&hm(f.start)!=null&&hm(f.end)!=null&&/^\d{4}-\d{2}-\d{2}$/.test(f.date)?shiftPay({date:f.date,start:f.start,end:f.end,ph:f.ph,brk:f.brk,brkAt:f.brkAt},w):null;
+  const cap=+w.visa.cap||48,trial=prev&&w.visa.on&&AU()?visaFor(f.date,Object.assign({},w,{shifts:w.shifts.filter(s=>s.id!==f.id).concat([{date:f.date,start:f.start,end:f.end,brk:f.brk,brkAt:f.brkAt,ph:f.ph}])})):null;
+  return `${prev?`<div style="margin-top:10px">${prev.lines.map(l=>`<div class="kv"><span>${l.label}: ${l.h} h × ${money(l.rate)}</span><b class="num">${money(l.amt)}</b></div>`).join("")}<div class="kv"><span><b>Expected pay</b></span><b class="num">${money(prev.pay)}</b></div></div>`:""}
+    ${trial&&trial.h>cap?`<p class="notice" style="margin:10px 0 0">This takes ${esc(shortDate(trial.from))} – ${esc(shortDate(trial.to))} to ${trial.h} h, over your ${cap} h visa limit.</p>`:""}`}
+function wkShiftForm(w){const f=WK,changed=f.changed,opts=f.off?WK_OFF:WK_CHANGE;
+  return `<form id="wkform" style="margin-bottom:12px">
+    <div class="field"><label for="wkd">Date</label><input class="inp" type="date" id="wkd" value="${esc(f.date)}"></div>
+    <div class="two"><div class="field"><label for="wks">${changed?"Actual start":"Start"}</label><input class="inp" type="time" id="wks" value="${esc(f.start)}"></div><div class="field"><label for="wke">${changed?"Actual finish":"Finish"}</label><input class="inp" type="time" id="wke" value="${esc(f.end)}"></div></div>
+    <label class="check" for="wkch"><input type="checkbox" id="wkch" data-wk ${changed?"checked":""} ${f.off?"disabled":""}> The times changed from my roster</label>
+    ${changed&&!f.off?`<div class="two"><div class="field"><label for="wkps">Rostered start</label><input class="inp" type="time" id="wkps" value="${esc(f.pStart)}"></div><div class="field"><label for="wkpe">Rostered finish</label><input class="inp" type="time" id="wkpe" value="${esc(f.pEnd)}"></div></div>`:""}
+    <label class="check" for="wkoff"><input type="checkbox" id="wkoff" data-wk ${f.off?"checked":""}> I didn't work this shift</label>
+    <label class="check" for="wkph"><input type="checkbox" id="wkph" data-wk ${f.ph?"checked":""}> Public holiday</label>
+    ${changed||f.off?`<div class="two"><div class="field"><label for="wkr">Reason</label><select class="inp" id="wkr"><option value="">Choose</option>${opts.map(o=>`<option${o===f.reason?" selected":""}>${o}</option>`).join("")}</select></div><div class="field"><label for="wkn">Note (optional)</label><input class="inp" id="wkn" value="${esc(f.note)}" autocomplete="off"></div></div>`:""}
+    ${f.off?"":`<details class="more"${f.brk!==""||f.brkAt?" open":""}><summary>Unpaid break ›</summary><div class="two"><div class="field"><label for="wkb">Minutes</label><input class="inp num" id="wkb" inputmode="numeric" value="${esc(f.brk)}" placeholder="${+w.brk.unpaid||0} if ${+w.brk.minH||0} h or longer"></div><div class="field"><label for="wkba">Started at (optional)</label><input class="inp" type="time" id="wkba" value="${esc(f.brkAt)}"></div></div><p class="small muted" style="margin:6px 0 0">Without a start time, the break comes out of your lowest-paid hours.</p></details>`}
+    <div id="wkprev">${wkPreview(w)}</div>
+    ${f.err?`<p class="err" role="alert">${esc(f.err)}</p>`:""}
+    <div class="btnrow" style="margin-top:10px"><button type="submit" class="btn primary">Save shift</button><button type="button" class="btn" data-act="wkcancel">Cancel</button>${f.id?`<button type="button" class="btn danger${f.del?" armed":""}" data-act="wkdel">${f.del?"Tap again to delete":"Delete"}</button>`:""}</div></form>`}
+function wkSlipForm(){const f=WK;
+  return `<form id="wkform" style="margin-bottom:12px">
+    <div class="field"><label for="wsd">Pay date</label><input class="inp" type="date" id="wsd" value="${esc(f.payDate)}"></div>
+    <div class="two"><div class="field"><label for="wsf">Pay period from</label><input class="inp" type="date" id="wsf" value="${esc(f.from)}"></div><div class="field"><label for="wst">To</label><input class="inp" type="date" id="wst" value="${esc(f.to)}"></div></div>
+    <div class="two"><div class="field"><label for="wsg">Gross (before tax)</label><input class="inp num" id="wsg" inputmode="decimal" value="${esc(f.gross)}"></div><div class="field"><label for="wsx">Tax</label><input class="inp num" id="wsx" inputmode="decimal" value="${esc(f.tax)}"></div></div>
+    ${f.err?`<p class="err" role="alert">${esc(f.err)}</p>`:""}
+    <div class="btnrow" style="margin-top:10px"><button type="submit" class="btn primary">Save payslip</button><button type="button" class="btn" data-act="wkcancel">Cancel</button>${f.id?`<button type="button" class="btn danger${f.del?" armed":""}" data-act="wkdel">${f.del?"Tap again to delete":"Delete"}</button>`:""}</div></form>`}
+function wkSetupForm(w){const f=WK,R=f.rates,au=AU();
+  const rate=(k,l,extra="")=>`<div class="field"><label for="wr_${k}">${l}</label><input class="inp num" id="wr_${k}" inputmode="decimal" value="${esc(R[k])}" placeholder="$ per hour">${extra}</div>`;
+  return `<section class="card"><div class="head"><h2>Pay rates</h2></div><form id="wkform">
+    <p class="small muted" style="margin:0 0 10px">Copy the hourly rates from your payslip, with every decimal (like 31.2468), so the pay matches to the cent. Leave a rate empty if it doesn't apply to you.</p>
+    ${rate("ord","Ordinary hours")}
+    <div class="two">${rate("early","Early morning")}<div class="field"><label for="wr_eb">Before</label><input class="inp" type="time" id="wr_eb" value="${esc(R.earlyBefore)}"></div></div>
+    <div class="two">${rate("eve","Evening")}<div class="field"><label for="wr_ea">From</label><input class="inp" type="time" id="wr_ea" value="${esc(R.eveAfter)}"></div></div>
+    <div class="two">${rate("sat","Saturday")}${rate("sun","Sunday")}</div>
+    <div class="two">${rate("sunx","Sunday extra")}<div class="field"><label for="wr_sxh">Extra hours each Sunday</label><input class="inp num" id="wr_sxh" inputmode="decimal" value="${esc(R.sunxH)}"></div></div>
+    ${rate("ph","Public holiday")}
+    <h3 style="margin:16px 0 6px">Pay days</h3>
+    <div class="two"><div class="field"><label for="wpl">Paid</label><select class="inp" id="wpl"><option value="14"${+f.pay.len!==7?" selected":""}>Fortnightly</option><option value="7"${+f.pay.len===7?" selected":""}>Weekly</option></select></div><div class="field"><label for="wplag">Days after period ends</label><input class="inp num" id="wplag" inputmode="numeric" value="${esc(f.pay.lag)}"></div></div>
+    <div class="field"><label for="wpa">A pay period started on</label><input class="inp" type="date" id="wpa" value="${esc(f.pay.anchor)}"></div>
+    <p class="small muted" style="margin:6px 0 0">Copy the “Pay period” start date from any payslip.</p>
+    <h3 style="margin:16px 0 6px">Breaks</h3>
+    <div class="two"><div class="field"><label for="wb_p">Paid (min)</label><input class="inp num" id="wb_p" inputmode="numeric" value="${esc(f.brk.paid)}"></div><div class="field"><label for="wb_u">Unpaid (min)</label><input class="inp num" id="wb_u" inputmode="numeric" value="${esc(f.brk.unpaid)}"></div></div>
+    <div class="field"><label for="wb_m">Unpaid break on shifts of at least (hours)</label><input class="inp num" id="wb_m" inputmode="decimal" value="${esc(f.brk.minH)}"></div>
+    ${au?`<h3 style="margin:16px 0 6px">Tax</h3>
+    <label class="check" for="wmed"><input type="checkbox" id="wmed" ${f.medicare?"checked":""}> I pay the Medicare levy</label>
+    <p class="small muted" style="margin:0 0 6px">Most student visa holders can't use Medicare and don't pay the levy, but you need a Medicare Entitlement Statement from Services Australia to claim the exemption. Leave this on if you're not sure.</p>
+    <h3 style="margin:16px 0 6px">Student visa</h3>
+    <label class="check" for="wvis"><input type="checkbox" id="wvis" data-wk ${f.visa.on?"checked":""}> Track my visa work limit</label>
+    ${f.visa.on?`<div class="field"><label for="wcap">Hours allowed a fortnight in study periods</label><input class="inp num" id="wcap" inputmode="numeric" value="${esc(f.visa.cap)}"></div>
+    <p class="small muted" style="margin:6px 0">Add each study period from your uni's calendar, including exam weeks. Breaks between them have no limit.</p>
+    ${f.study.map((p,i)=>`<div class="two" style="margin-top:8px"><div class="field"><label for="wpn${i}">Name</label><input class="inp" id="wpn${i}" value="${esc(p.name)}" placeholder="e.g. Semester 1"></div><div class="field"><label class="lab">&nbsp;</label><button type="button" class="btn sm danger" data-act="wkstdel" data-i="${i}">Remove</button></div></div>
+      <div class="two"><div class="field"><label for="wps${i}">Starts</label><input class="inp" type="date" id="wps${i}" value="${esc(p.start)}"></div><div class="field"><label for="wpe${i}">Ends</label><input class="inp" type="date" id="wpe${i}" value="${esc(p.end)}"></div></div>`).join("")}
+    <button type="button" class="btn sm" data-act="wkstadd" style="margin-top:10px">Add a study period</button>`:""}`:""}
+    ${f.err?`<p class="err" role="alert" style="margin-top:10px">${esc(f.err)}</p>`:""}
+    <div class="btnrow" style="margin-top:14px"><button type="submit" class="btn primary">Save</button><button type="button" class="btn" data-act="wkcancel">Cancel</button></div></form></section>`}
+/* read the open form's inputs back into WK, so a redraw keeps what was typed */
+function readWk(){if(!WK)return;const g=id=>{const e=$(id);return e?e.value:undefined},c=id=>{const e=$(id);return e?e.checked:undefined},set=(k,v)=>{if(v!==undefined)WK[k]=v};
+  if(WK.f==="shift"){set("date",g("#wkd"));set("start",g("#wks"));set("end",g("#wke"));set("pStart",g("#wkps"));set("pEnd",g("#wkpe"));set("changed",c("#wkch"));set("off",c("#wkoff"));set("ph",c("#wkph"));set("reason",g("#wkr"));set("note",g("#wkn"));set("brk",g("#wkb"));set("brkAt",g("#wkba"))}
+  if(WK.f==="slip"){set("payDate",g("#wsd"));set("from",g("#wsf"));set("to",g("#wst"));set("gross",g("#wsg"));set("tax",g("#wsx"))}
+  if(WK.f==="setup"){const R=WK.rates;for(const [k] of WK_TIERS){const v=g("#wr_"+k);if(v!==undefined)R[k]=v}const eb=g("#wr_eb"),ea=g("#wr_ea"),sx=g("#wr_sxh");if(eb!==undefined)R.earlyBefore=eb;if(ea!==undefined)R.eveAfter=ea;if(sx!==undefined)R.sunxH=sx;
+    const bp=g("#wb_p"),bu=g("#wb_u"),bm=g("#wb_m");if(bp!==undefined)WK.brk.paid=bp;if(bu!==undefined)WK.brk.unpaid=bu;if(bm!==undefined)WK.brk.minH=bm;
+    const pl=g("#wpl"),pg=g("#wplag"),pa=g("#wpa");if(pl!==undefined)WK.pay.len=+pl;if(pg!==undefined)WK.pay.lag=pg;if(pa!==undefined)WK.pay.anchor=pa;
+    const md=c("#wmed"),vo=c("#wvis"),cp=g("#wcap");if(md!==undefined)WK.medicare=md;if(vo!==undefined)WK.visa.on=vo;if(cp!==undefined)WK.visa.cap=cp;
+    WK.study.forEach((p,i)=>{const n=g("#wpn"+i),s=g("#wps"+i),e=g("#wpe"+i);if(n!==undefined)p.name=n;if(s!==undefined)p.start=s;if(e!==undefined)p.end=e})}}
+const ISO=/^\d{4}-\d{2}-\d{2}$/;
+/* the error for a shift, or "" if it can be saved */
+function shiftErr(f){if(!ISO.test(f.date||""))return"Pick the date.";if(hm(f.start)==null||hm(f.end)==null)return"Enter the start and finish times.";
+  if(f.start===f.end)return"The shift has to end after it starts.";if(f.changed&&!f.off&&(hm(f.pStart)==null||hm(f.pEnd)==null))return"Enter the rostered times too, or untick “The times changed”.";
+  if(String(f.brk??"").trim()!==""&&!(+f.brk>=0))return"Enter the break in minutes, or leave it empty.";return""}
+function slipErr(f){if(!ISO.test(f.payDate||""))return"Pick the pay date.";if(!ISO.test(f.from||"")||!ISO.test(f.to||""))return"Pick the pay period's dates.";if(f.to<f.from)return"The pay period has to end after it starts.";
+  const g=parseAmt(f.gross),x=String(f.tax).trim()===""?0:parseAmt(f.tax);if(!(g>0))return"Enter the gross pay.";if(isNaN(x)||x<0)return"Enter the tax as an amount, or 0.";if(x>g)return"The tax can't be more than the gross pay.";return""}
+function setupErr(f){const n=v=>String(v??"").trim()===""||parseAmt(v)>=0;if(!(parseAmt(f.rates.ord)>0))return"Enter your ordinary hourly rate.";
+  for(const [k,l] of WK_TIERS)if(!n(f.rates[k]))return`Enter the ${l.toLowerCase()} rate as an amount, or leave it empty.`;
+  if(f.pay.anchor&&!ISO.test(f.pay.anchor))return"Pick the date a pay period started, or leave it empty.";if(String(f.pay.lag).trim()!==""&&!(+f.pay.lag>=0&&+f.pay.lag<=31))return"Enter how many days after a period ends you're paid.";
+  if(f.visa.on){if(!(+f.visa.cap>0))return"Enter the hours your visa allows each fortnight.";const p=f.study.find(p=>!ISO.test(p.start||"")||!ISO.test(p.end||"")||p.end<p.start);if(p)return`Check the dates for ${p.name||"each study period"}: it has to end after it starts.`}
+  return""}
+async function wkSave(){readWk();const f=WK;if(!f)return;
+  if(f.f==="shift"){f.err=shiftErr(f);if(f.err){render();return}
+    const s={id:f.id||wkId("sh"),date:f.date,start:f.start,end:f.end,off:!!f.off,ph:!!f.ph,reason:(f.changed||f.off)?f.reason||"":"",note:(f.changed||f.off)?String(f.note||"").trim():""};
+    if(f.changed&&!f.off){s.pStart=f.pStart;s.pEnd=f.pEnd}if(!f.off&&String(f.brk??"").trim()!=="")s.brk=Math.round(+f.brk);if(!f.off&&f.brkAt)s.brkAt=f.brkAt;
+    try{await saveWork(w=>{w.shifts=w.shifts.filter(x=>x.id!==s.id).concat([s])});WK=null;toast(f.id?"Shift updated":"Shift added");render()}catch(e){f.err=dbMsg(e);render()}}
+  else if(f.f==="slip"){f.err=slipErr(f);if(f.err){render();return}
+    const s={id:f.id||wkId("ps"),payDate:f.payDate,from:f.from,to:f.to,gross:r2(parseAmt(f.gross)),tax:r2(String(f.tax).trim()===""?0:parseAmt(f.tax))};
+    try{await saveWork(w=>{w.slips=w.slips.filter(x=>x.id!==s.id).concat([s])});WK=null;toast("Payslip saved");render()}catch(e){f.err=dbMsg(e);render()}}
+  else if(f.f==="setup"){f.err=setupErr(f);if(f.err){render();return}
+    const rates={};for(const [k] of WK_TIERS){const v=String(f.rates[k]??"").trim();rates[k]=v===""?"":+parseAmt(v)}
+    rates.earlyBefore=f.rates.earlyBefore||"07:00";rates.eveAfter=f.rates.eveAfter||"18:00";rates.sunxH=+f.rates.sunxH||0;
+    try{await saveWork(w=>{w.rates=rates;w.brk={paid:Math.max(0,+f.brk.paid||0),unpaid:Math.max(0,+f.brk.unpaid||0),minH:Math.max(0,+f.brk.minH||0)};w.medicare=f.medicare!==false;if(f.pay.anchor)w.pay={len:+f.pay.len===7?7:14,lag:Math.round(+f.pay.lag||0),anchor:f.pay.anchor};else delete w.pay;
+      w.visa={on:!!f.visa.on,cap:+f.visa.cap||48};w.study=f.study.filter(p=>p.start&&p.end).map(p=>({name:String(p.name||"").trim(),start:p.start,end:p.end}))});
+      WK=null;toast("Pay settings saved");render()}catch(e){f.err=dbMsg(e);render()}}}
+function wkOpenShift(id){const w=work(),s=w.shifts.find(x=>x.id===id);
+  if(s){WK={f:"shift",id:s.id,date:s.date,start:s.start,end:s.end,pStart:s.pStart||s.start,pEnd:s.pEnd||s.end,changed:!!(s.pStart&&(s.pStart!==s.start||s.pEnd!==s.end)),off:!!s.off,ph:!!s.ph,reason:s.reason||"",note:s.note||"",brk:s.brk!=null?String(s.brk):"",brkAt:s.brkAt||"",err:""};return}
+  /* a new shift starts with the times of the last one logged */
+  const last=w.shifts.slice().sort((a,b)=>b.date.localeCompare(a.date))[0],st=last?(last.pStart||last.start):"",en=last?(last.pEnd||last.end):"";
+  WK={f:"shift",id:"",date:today(),start:st,end:en,pStart:st,pEnd:en,changed:false,off:false,ph:false,reason:"",note:"",brk:"",brkAt:"",err:""}}
+function wkOpenSlip(id,pre){const s=work().slips.find(x=>x.id===id);if(!s&&pre){WK={f:"slip",id:"",payDate:pre.p,from:pre.f,to:pre.t,gross:"",tax:"",err:""};return}
+  WK=s?{f:"slip",id:s.id,payDate:s.payDate,from:s.from||"",to:s.to||"",gross:String(s.gross),tax:String(s.tax),err:""}:{f:"slip",id:"",payDate:today(),from:addDays(today(),-16),to:addDays(today(),-3),gross:"",tax:"",err:""}}
+function wkOpenSetup(){const w=work(),sc=wkSched(w);WK={f:"setup",pay:{len:sc.len,lag:sc.lag,anchor:sc.src==="assumed"?"":sc.anchor},rates:Object.assign({},w.rates),brk:Object.assign({},w.brk),medicare:w.medicare!==false,visa:Object.assign({},w.visa),study:w.study.map(p=>Object.assign({},p)),err:""}}
+async function wkDelete(){const f=WK;if(!f||!f.id)return;if(!f.del){readWk();f.del=true;render();return}
+  const key=f.f==="shift"?"shifts":"slips";try{await saveWork(w=>{w[key]=w[key].filter(x=>x.id!==f.id)});WK=null;toast(f.f==="shift"?"Shift deleted":"Payslip deleted");render()}catch(e){f.err=dbMsg(e);f.del=false;render()}}
 const TXROW_H=61;/* a row's usual height, so the browser can skip drawing off-screen days in long lists without the page jumping */
 function vActivity(){return imCard()+vActivity0()}
 function vActivity0(){
@@ -2509,6 +2806,7 @@ function vMore(){
   return draftBanner()+`<section class="card menu"><div class="rows">
     ${feat("people")||feat("loans")?item("people",feat("people")&&feat("loans")?"People and loans":feat("loans")?"Loans":"People",[feat("people")?(ppl.length?(net>0?`Owed to you ${money(net)}`:net<0?`You owe ${money(-net)}`:"IOUs all square"):"IOUs with friends and family"):"",feat("loans")?(loans.length?`${money0(loans.reduce((s,l)=>s+l.owing,0))} owing on loans`:"Loans you're paying down"):""].filter(Boolean).join(" · ")):""}
     ${feat("trading")?item("trading","Prop trading",tt.n?`${tt.n} accounts · net ${money0(tt.net)}`:"Accounts you buy and their payouts"):""}
+    ${item("work","Work and pay",(()=>{const w=work();return wkRate(w,"ord")>0?`${w.shifts.filter(s=>!s.off&&s.date>today()).length} rostered shift${w.shifts.filter(s=>!s.off&&s.date>today()).length===1?"":"s"} · about ${money0(wkYear(w).annual)} this year`:"Shifts, pay rates, expected yearly pay and tax back"})())}
     ${item("calendar","Calendar","What came in and went out each day, and what's coming up")}
     ${item("trips","Trips",(()=>{const tr=activeTrip();return tr?`${esc(tr.name)} is on now`:"A budget for a trip, and what it really cost"})())}
     <button class="row" data-act="import"><div class="main"><div class="t">Import a bank statement</div><div class="s">Add what you missed and fix what's off</div></div><span class="chev">›</span></button>
@@ -4326,7 +4624,7 @@ function go(v,opt){opt=opt||{};
   else if(!opt.back&&(v!==S.view||v==="acct"||(v==="settings"&&(opt.sset||null)!==(S.sset||null)))){S.hist.push({view:S.view,acct:S.acct,itab:S.itab,month:S.month,sset:S.sset,y:window.scrollY});if(S.hist.length>30)S.hist.shift();if(USE_HIST){try{history.pushState({mt:1},"");histPushed++}catch(e){}}}
   if(v==="settings"&&!opt.back)S.sset=opt.sset||null;
   if(v!=="home")S.homeEdit=null;
-  S.view=v;if(v!=="settings"&&!S.draftDirty)S.draft=null;try{localStorage.setItem("mt.view",v)}catch(e){}
+  S.view=v;if(v!=="work")WK=null;if(v!=="settings"&&!S.draftDirty)S.draft=null;try{localStorage.setItem("mt.view",v)}catch(e){}
   if(!opt.keepScroll)window.scrollTo(0,0);render()}
 function doBack(){const pv=S.hist.pop();if(!pv)return false;S._back=true;S.acct=pv.acct;S.itab=pv.itab;S.month=pv.month;S.sset=pv.sset||null;go(pv.view,{back:true,keepScroll:true});
   requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,pv.y||0)));return true}
@@ -4390,6 +4688,16 @@ document.addEventListener("click",async e=>{
     case "actm":S.actMonth=a.dataset.m;S.actLim=0;render();break;
     case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
     case "calday":S.calDay=a.dataset.d;render();break;
+    case "wksetup":wkOpenSetup();render();break;
+    case "wknew":wkOpenShift("");render();break;
+    case "wkedit":wkOpenShift(a.dataset.id);render();break;
+    case "wkslipnew":wkOpenSlip("");render();break;
+    case "wkslipfor":wkOpenSlip("",{f:a.dataset.f,t:a.dataset.t,p:a.dataset.p});render();setTimeout(()=>{const e=$("#wkform");if(e)e.scrollIntoView({block:"center"})},60);break;
+    case "wkslipedit":wkOpenSlip(a.dataset.id);render();break;
+    case "wkcancel":WK=null;render();break;
+    case "wkdel":once("wkdel",wkDelete);break;
+    case "wkstadd":readWk();WK.study.push({name:"",start:"",end:""});render();break;
+    case "wkstdel":readWk();WK.study.splice(+a.dataset.i,1);render();break;
     case "tripnew":{const t=today();TR={name:"",start:t,end:addDays(t,6),budget:"",err:""};render();break}
     case "tripcancel":TR=null;render();break;
     case "tripend":{const id=a.dataset.id,t=today();try{await saveTrips(l=>l.map(x=>x.id===id?Object.assign({},x,{end:t<x.start?x.start:t}):x));toast("Trip ended")}catch(err){toast(dbMsg(err))}render();break}
@@ -4589,14 +4897,17 @@ document.addEventListener("click",async e=>{
   }
 });
 document.addEventListener("input",e=>{if(F&&e.target&&(e.target.id==="ffx"||e.target.id==="famt")){const x=$("#ffx"),rr=$("#ffxr");if(x&&rr){const a=parseAmt(F.amount)||0,v=parseAmt(x.value);const cur=(F.fx&&F.fx.cur)||homeCur();rr.textContent=v>0&&a>0?`Rate: 1 ${CUR} = ${(v/a).toFixed(v/a<10?3:1)} ${cur}`:"Add it to track your exchange rate and fees over time."}}});
+document.addEventListener("input",e=>{if(WK&&WK.f==="shift"&&e.target.closest&&e.target.closest("#wkform")){readWk();const pv=$("#wkprev");if(pv)pv.innerHTML=wkPreview(work())}});
 document.addEventListener("input",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("change",e=>{if(G&&e.target.closest&&e.target.closest("#goalform")){readGoal();const f=$("#gfit");if(f)f.innerHTML=goalFit()}});
 document.addEventListener("input",e=>{if(V&&e.target.closest&&e.target.closest("#valform")){readVal();const t=$("#vtot");if(t)t.textContent=money(valTotal())}});
-document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else once("tx",()=>saveTx(false))}if(e.target.id==="catrenform")once("catren",saveCatRename);if(e.target.id==="propform")once("prop",saveProp);if(e.target.id==="tripform")once("trip",tripSave);if(e.target.id==="pauseform")once("pause",savePause);if(e.target.id==="valform")once("val",saveVal);if(e.target.id==="goalform")once("goal",()=>saveGoal(false));if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
+document.addEventListener("submit",e=>{e.preventDefault();if(e.target.id==="txform"){if(F&&F.step<3)nextStep();else once("tx",()=>saveTx(false))}if(e.target.id==="catrenform")once("catren",saveCatRename);if(e.target.id==="propform")once("prop",saveProp);if(e.target.id==="tripform")once("trip",tripSave);if(e.target.id==="wkform")once("wk",wkSave);if(e.target.id==="pauseform")once("pause",savePause);if(e.target.id==="valform")once("val",saveVal);if(e.target.id==="goalform")once("goal",()=>saveGoal(false));if(e.target.id==="gqform")saveGoalQuick();if(e.target.id==="mbform")saveMatch();if(e.target.id==="storyform"){if(Y&&Y.step<3)storyNext();else if(Y)applyStory()}if(e.target.id==="setupform"){if(W&&W.step<6)setupNext();else saveSetup()}});
 document.addEventListener("change",e=>{
   const el=e.target;
   if(el.id==="fdesc"&&F){readForm();const before=JSON.stringify([F.type,F.category,F.account,F.to]);autofill(el.value);if(JSON.stringify([F.type,F.category,F.account,F.to])!==before)drawSheet()}
   if(el.id==="plog"&&P){readProp();drawProp()}
+  if(WK&&el.dataset&&"wk" in el.dataset&&el.closest("#wkform")){readWk();render()}
+  else if(WK&&WK.f==="shift"&&el.closest&&el.closest("#wkform")){readWk();const pv=$("#wkprev");if(pv)pv.innerHTML=wkPreview(work())}
   if(el.id==="ftrip"&&F){readForm();const tr=tripFor(F.date);F.trip=el.checked&&tr?tr.id:false}
   if(el.id==="fdate"&&F){readForm();drawSheet()}
   if(el.dataset&&el.dataset.y&&Y){const [i,f]=el.dataset.y.split(".");const it=Y.items[+i];if(it){if(f==="on")it.on=el.checked;else if(f==="monthly"){const v=parseAmt(el.value);it.monthly=isNaN(v)?0:v}else it[f]=el.value;if(f==="on"||f==="kind")drawStory()}}
