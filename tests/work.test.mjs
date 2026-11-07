@@ -92,31 +92,59 @@ test("tax: Medicare levy is nil to the threshold, phased in, then 2%", () => {
   assert.equal(taxParts(40000, 2026, true).levy, 800);
 });
 
-test("the year: payslips, unpaid shifts, rostered shifts and the weekly average", () => {
+test("tax taken out of a pay: ATO scale 2 formula, weekly and fortnightly", () => {
+  const withhold = get("withhold");
+  assert.equal(withhold(700, 14), 0); // $350 a week is under the threshold
+  assert.equal(withhold(1000, 14), 42); // $500 a week: 0.15 x 500.99 - 54.3462 = 20.80, rounds to 21, doubled
+  assert.equal(withhold(1600, 14), 166); // $800 a week: 0.179 x 800.99 - 60.8377 = 82.54 -> 83
+  assert.equal(withhold(3700, 7), 1084); // top band
+  assert.equal(withhold(0, 14), 0);
+});
+
+test("pay days come from the latest payslip's period and pay date", () => {
+  const w = W({ slips: [{ id: "p1", payDate: "2030-03-06", from: "2030-02-17", to: "2030-03-02", gross: 1000, tax: 42 }] });
+  const sc = plain(get("wkSched")(w));
+  assert.deepEqual(sc, { len: 14, anchor: "2030-02-17", lag: 4, src: "slip" });
+  const ps = plain(get("wkPeriods")(sc, "2030-03-01", "2030-04-30"));
+  assert.deepEqual(ps.map((p) => p.pay), ["2030-03-06", "2030-03-20", "2030-04-03", "2030-04-17"]);
+  assert.equal(ps[1].from, "2030-03-03");
+  assert.equal(ps[1].to, "2030-03-16");
+});
+
+test("the year by pay day: payslips, pay days without one, shifts not paid yet, rostered and the average", () => {
   const t = "2030-03-13"; // a Wednesday
   const shifts = [];
-  // 8 weeks of one 4-hour ordinary shift each Monday ($120 a week), from 2030-01-14
+  // one 4-hour ordinary shift ($120) each Monday from 14 Jan to 11 Mar, and one rostered on 20 Mar
   for (let i = 0; i < 9; i++) shifts.push({ id: "s" + i, date: addDays("2030-01-14", i * 7), start: "10:00", end: "14:00" });
-  shifts.push({ id: "f", date: "2030-03-20", start: "10:00", end: "14:00" }); // rostered next week
-  const slips = [{ id: "p1", payDate: "2030-03-06", from: "2030-02-17", to: "2030-03-02", gross: 1000, tax: 100 }];
+  shifts.push({ id: "f", date: "2030-03-20", start: "10:00", end: "14:00" });
+  const slips = [{ id: "p1", payDate: "2030-03-06", from: "2030-02-17", to: "2030-03-02", gross: 1000, tax: 42 }];
   const Y = wkYear(W({ shifts, slips }), t);
   assert.equal(Y.y, 2029);
   assert.equal(Y.paidG, 1000);
-  assert.equal(Y.owed, 240); // 3 and 10 March, after the payslip period
+  assert.equal(Y.paidT, 42);
+  assert.equal(Y.nos, 600); // 14 Jan – 11 Feb: paid on earlier pay days with no payslip added
+  assert.equal(Y.owed, 240); // 4 and 11 March, paid on 20 March
   assert.equal(Y.rost, 120);
-  assert.equal(Y.earned, 1240);
-  assert.equal(Y.annual, r(1240 + 120 + Y.trend));
   // 8 weeks from 17 Jan: the payslip's $1,000 for its fortnight, plus the 6 shifts on days no payslip covers ($720)
   assert.equal(Y.avg, r((1000 + 720) / 56 * 7));
-  // stopping now: all tax taken out comes back, since income is under the tax-free threshold
-  assert.equal(Y.quit.withheld, 124);
-  assert.equal(Y.quit.refund, 124);
+  assert.equal(Y.earned, 1840);
+  assert.equal(Y.annual, r(1840 + 120 + Y.trend));
+  const next = Y.next;
+  assert.equal(next.pay, "2030-03-20");
+  // the roster already reaches past this period, so its unrostered days count as days off, not as average pay
+  assert.equal(next.gross, 240);
+  assert.equal(next.tax, 0);
+  // stopping now: income is under the tax-free threshold, so the $42 taken out comes back
+  assert.equal(Y.quit.withheld, 42);
+  assert.equal(Y.quit.refund, 42);
+  assert.equal(Y.keep.withheld, 42); // about $215 a week is under the weekly threshold, so no more tax comes out
 });
 
-test("the year: without payslips there's no refund estimate", () => {
-  const Y = wkYear(W({ shifts: [{ id: "a", date: "2030-03-11", start: "10:00", end: "14:00" }] }), "2030-03-13");
-  assert.equal(Y.quit, null);
-  assert.equal(Y.earned, 120);
+test("the year: without payslips, tax taken out is estimated with the formula", () => {
+  const Y = wkYear(W({ shifts: [{ id: "a", date: "2030-03-11", start: "08:00", end: "16:30" }] }), "2030-03-13");
+  assert.equal(Y.earned, 240);
+  assert.equal(Y.paidT, 0);
+  assert.equal(Y.quit.refund, 0);
 });
 
 test("visa: the busier of the two Monday fortnights, only in a study period", () => {
