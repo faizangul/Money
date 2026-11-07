@@ -304,7 +304,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=59;
+const BUILD=60;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -1102,7 +1102,9 @@ const PSTAT=["In progress","Passed","Funded","Failed","Closed"];
 
 const S={db:null,dl:null,cfg:null,cfgLoaded:false,tx:[],txLoaded:false,props:[],state:"loading",
   view:"home",month:ym(today()),actMonth:ym(today()),actQ:"",actType:"All",draft:null};
-try{const v=localStorage.getItem("mt.view");if(v)S.view=v}catch(e){}
+/* reopen where you were if it was recently; after a while away, start on Home */
+const AWAY=15*60e3;
+try{const v=localStorage.getItem("mt.view"),at=+localStorage.getItem("mt.viewAt")||0;if(v&&Date.now()-at<AWAY)S.view=v}catch(e){}
 if(/^#[a-z]+$/.test(location.hash))S.view=location.hash.slice(1);
 /* an account page needs to know which account; after a reload that's gone, so open Home instead */
 if(!["home","activity","insights","more","people","trading","loans","settings","plan","tax","budget","calendar","trips","work"].includes(S.view))S.view="home";
@@ -1787,8 +1789,8 @@ function runCounts(root){if(RM()||(root.id==="app"&&!S.tx.length))return;root.qu
   const fmt=v=>f==="m2"?money(v):f==="pct"?Math.round(v)+"%":money0(v),t0=performance.now(),d=Math.min(900,500+Math.log10(Math.abs(to)+1)*60);
   const step=now=>{if(!el.isConnected)return;const k=Math.min(1,(now-t0)/d),e=1-Math.pow(1-k,3);el.textContent=k<1?fmt(to*e):fin;if(k<1)requestAnimationFrame(step)};el.textContent=fmt(0);requestAnimationFrame(step)})}
 
-const HTITLE={safe:"Safe to spend",month:"This month",upcoming:"Coming up",prop:"Prop fees this pay",spend:"Where it went",accounts:"Your money now",ef:"Emergency fund",invest:"Investments",fire:"Financial independence",goals:"Goals",trading:"Prop trading"};
-const HSUB={safe:"Until your next payday",month:"Money in, out and left over",upcoming:"Bills and pay due soon",prop:"Fee limit until payday",spend:"Spending ring",accounts:"Balances and cards",ef:"Progress and next steps",method:"50/30/20 or buckets",invest:"Value and cash",fire:"Progress to your number",goals:"Savings goals",trading:"Fees and payouts"};
+const HTITLE={work:"Pay day",safe:"Safe to spend",month:"This month",upcoming:"Coming up",prop:"Prop fees this pay",spend:"Where it went",accounts:"Your money now",ef:"Emergency fund",invest:"Investments",fire:"Financial independence",goals:"Goals",trading:"Prop trading"};
+const HSUB={safe:"Until your next payday",month:"Money in, out and left over",work:"Next pay and your year at work",upcoming:"Bills and pay due soon",prop:"Fee limit until payday",spend:"Spending ring",accounts:"Balances and cards",ef:"Progress and next steps",method:"50/30/20 or buckets",invest:"Value and cash",fire:"Progress to your number",goals:"Savings goals",trading:"Fees and payouts"};
 const GRIP='<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>';
 function homeOrder(def){const sv=((S.cfg&&S.cfg.home)||{}).order||[],o=sv.filter(k=>def.includes(k));
   def.forEach((k,i)=>{if(o.includes(k))return;const prev=def.slice(0,i).reverse().find(x=>o.includes(x));o.splice(prev?o.indexOf(prev)+1:0,0,k)});return o}
@@ -1845,7 +1847,7 @@ function vHome(){
       <div><b>${money0(nw.debts)}</b><small>You owe</small></div>
       <div><b>${dl===null?"–":(dl>=0?"+":"−")+money0(Math.abs(dl))}</b><small>${dl===null?"Change":"Since "+shortDate(pe)}</small></div>
     </div></button>`;
-  const B={},HO=[];let hk="_top";const mark=k=>{B[hk]=(B[hk]||"")+h;h="";hk=k;HO.push(k)};mark("safe");h+=safeHtml();mark("month");
+  const B={},HO=[];let hk="_top";const mark=k=>{B[hk]=(B[hk]||"")+h;h="";hk=k;HO.push(k)};mark("work");h+=wkHomeCard();mark("safe");h+=safeHtml();mark("month");
   h+=`<section class="card"><div class="head"><h2>${mLong(m)}${cur?" so far":""}</h2><span class="small muted">${bad?"Shortfall":"Left over"}</span></div>
     <div class="mbig num${bad?" amt neg":""}">${money(st.surplus)}</div>
     <div class="stats num" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><b>${money0(st.inc)}</b><small>Money in</small></div><div class="stat"><b>${money0(st.out)}</b><small>Money out</small></div>
@@ -2202,6 +2204,15 @@ function wkYearCard(w,t,au){const Y=wkYear(w,t),q=Y.quit,k=Y.keep,T=taxTable(Y.y
         <p class="small muted" style="margin:8px 0 0">Tax on income uses Australian resident rates for ${fyLabel(T.y)}, the low income tax offset${w.medicare!==false?`, and the Medicare levy${T.mlFrom?` (with the ${fyLabel(T.mlFrom)} low-income threshold, the latest published)`:""}`:", and no Medicare levy, as set in your pay settings"}. Tax taken out is from your payslips, and for pay not on a payslip yet, the ATO's 2026–27 withholding formula for someone who claimed the tax-free threshold.</p></details>
       <p class="small muted" style="margin:8px 0 0">Estimates only. See the note at the bottom of this page.</p>`;
   return h+`</section>`}
+/* Home: the next pay day's take-home pay, and the year ahead, for anyone who has set up their pay */
+function wkHomeCard(){const w=work();if(!(wkRate(w,"ord")>0))return"";const t=today(),au=AU(),Y=wkYear(w,t),n=Y.next;
+  const take=n?r2(n.gross-(au?n.tax:0)):0,soon=n?dBetween(t,n.pay):0;
+  return `<section class="card"><div class="head"><h2>${n?`Pay day ${soon===0?"today":soon===1?"tomorrow":`${DOW[dowOf(n.pay)]} ${esc(shortDate(n.pay))}`}`:"Your pay"}</h2><button class="linkbtn" data-go="work">Work and pay</button></div>
+    ${n?`<div class="mbig num" data-cnt="${take}" data-fmt="m0">${money0(take)}</div>
+    <p class="small muted" style="margin:2px 0 10px">Expected in your account${au?` · ${money0(n.gross)} before tax, ${money0(n.tax)} tax`:""}</p>`:""}
+    <div class="stats num"><div class="stat"><b data-cnt="${Y.annual}">${money0(Y.annual)}</b><small>Expected this year</small></div>
+      ${au?`<div class="stat"><b data-cnt="${Math.abs(Y.keep.refund)}">${money0(Math.abs(Y.keep.refund))}</b><small>${Y.keep.refund>=0?"Tax back, if you keep going":"Tax to pay, if you keep going"}</small></div>`:`<div class="stat"><b data-cnt="${Y.earned}">${money0(Y.earned)}</b><small>Earned so far</small></div>`}</div>
+    <p class="small muted" style="margin:8px 0 0">Estimates from your shifts and payslips.</p></section>`}
 /* the pay day log: the next pay day, then every pay day this year with its gross, tax and take-home pay */
 function wkPayCard(w,t,au){const form=WK&&WK.f==="slip"?wkSlipForm():"",Y=wkYear(w,t),n=Y.next,sc=Y.sched;
   const span=r=>`${esc(shortDate(r.from))} – ${esc(shortDate(r.to))}`,day=d=>`${DOW[dowOf(d)]} ${esc(shortDate(d))}`;
@@ -4624,7 +4635,7 @@ function go(v,opt){opt=opt||{};
   else if(!opt.back&&(v!==S.view||v==="acct"||(v==="settings"&&(opt.sset||null)!==(S.sset||null)))){S.hist.push({view:S.view,acct:S.acct,itab:S.itab,month:S.month,sset:S.sset,y:window.scrollY});if(S.hist.length>30)S.hist.shift();if(USE_HIST){try{history.pushState({mt:1},"");histPushed++}catch(e){}}}
   if(v==="settings"&&!opt.back)S.sset=opt.sset||null;
   if(v!=="home")S.homeEdit=null;
-  S.view=v;if(v!=="work")WK=null;if(v!=="settings"&&!S.draftDirty)S.draft=null;try{localStorage.setItem("mt.view",v)}catch(e){}
+  S.view=v;if(v!=="work")WK=null;if(v!=="settings"&&!S.draftDirty)S.draft=null;try{localStorage.setItem("mt.view",v);localStorage.setItem("mt.viewAt",String(Date.now()))}catch(e){}
   if(!opt.keepScroll)window.scrollTo(0,0);render()}
 function doBack(){const pv=S.hist.pop();if(!pv)return false;S._back=true;S.acct=pv.acct;S.itab=pv.itab;S.month=pv.month;S.sset=pv.sset||null;go(pv.view,{back:true,keepScroll:true});
   requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,pv.y||0)));return true}
@@ -4954,6 +4965,13 @@ document.addEventListener("keydown",e=>{if(e.key==="Escape"&&fanOpen()){closeFan
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&(F||P||V||W||Y||N||G||E||K||Q||SF||IM||GQ||MB||RS)){stashSheets();IM=null;GQ=null;N=false;G=null;E=false;K=null;Q=null;SF=false;MB=null;RS=null;F=null;P=null;V=null;W=null;Y=null;clearSheet()}});
 S.det=new Set();document.addEventListener("toggle",e=>{const d=e.target;if(d&&d.dataset&&d.dataset.det){d.open?S.det.add(d.dataset.det):S.det.delete(d.dataset.det)}},true);
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")stashSheets()});
+/* coming back after a while: start on Home again, with its numbers counting up, unless something is half-entered */
+let awayAt=0;
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){awayAt=Date.now();try{localStorage.setItem("mt.viewAt",String(awayAt))}catch(e){}return}
+  if(!awayAt||Date.now()-awayAt<AWAY||S.state!=="ready")return;awayAt=0;
+  if(sheetOpen()||F||WK||S.draftDirty||S.homeEdit)return;
+  if(S.view==="home"){S._vkey=null;render()}else go("home",{root:true})});
 window.addEventListener("pagehide",stashSheets);
 $("#themebtn").addEventListener("click",async()=>{
   const look=Object.assign({},S.look,{mode:isDark(S.look.mode)?"light":"dark"});applyLook(look);
