@@ -2153,7 +2153,7 @@ function vWork(){const w=work(),t=today(),au=AU(),ready=wkRate(w,"ord")>0;
   if(ready)h+=wkShiftsCard(w,t);
   h+=wkSlipsCard(w,t);
   if(ready)h+=`<section class="card"><div class="head"><h2>Pay rates${au?" and visa":""}</h2></div>
-    ${WK_TIERS.filter(([k])=>wkRate(w,k)).map(([k,l])=>`<div class="kv"><span>${l}${k==="early"?` (before ${fmtT(w.rates.earlyBefore)})`:k==="eve"?` (from ${fmtT(w.rates.eveAfter)})`:k==="sunx"?` (${+w.rates.sunxH} h)`:""}</span><b class="num">${money(wkRate(w,k))}/h</b></div>`).join("")}
+    ${WK_TIERS.filter(([k])=>wkRate(w,k)).map(([k,l])=>`<div class="kv"><span>${l}${k==="early"?` (before ${fmtT(w.rates.earlyBefore)})`:k==="eve"?` (from ${fmtT(w.rates.eveAfter)})`:k==="sunx"?` (${+w.rates.sunxH} h)`:""}</span><b class="num">$${wkRate(w,k)}/h</b></div>`).join("")}
     <div class="kv"><span>Breaks</span><b>${+w.brk.paid||0} min paid · ${+w.brk.unpaid||0} min unpaid</b></div>
     <button class="btn" data-act="wksetup" style="margin-top:10px">Edit pay rates${au?" and visa":""}</button></section>`;
   h+=`<p class="small muted" style="text-align:center;margin:0 8px">Estimates, not tax or visa advice.${au?" Check with the ATO, a registered tax agent, or Home Affairs.":""}</p>`;
@@ -2239,7 +2239,7 @@ function wkSlipForm(){const f=WK;
 function wkSetupForm(w){const f=WK,R=f.rates,au=AU();
   const rate=(k,l,extra="")=>`<div class="field"><label for="wr_${k}">${l}</label><input class="inp num" id="wr_${k}" inputmode="decimal" value="${esc(R[k])}" placeholder="$ per hour">${extra}</div>`;
   return `<section class="card"><div class="head"><h2>Pay rates</h2></div><form id="wkform">
-    <p class="small muted" style="margin:0 0 10px">Copy the hourly rates from your payslip. Leave a rate empty if it doesn't apply to you.</p>
+    <p class="small muted" style="margin:0 0 10px">Copy the hourly rates from your payslip, with every decimal (like 31.2468), so the pay matches to the cent. Leave a rate empty if it doesn't apply to you.</p>
     ${rate("ord","Ordinary hours")}
     <div class="two">${rate("early","Early morning")}<div class="field"><label for="wr_eb">Before</label><input class="inp" type="time" id="wr_eb" value="${esc(R.earlyBefore)}"></div></div>
     <div class="two">${rate("eve","Evening")}<div class="field"><label for="wr_ea">From</label><input class="inp" type="time" id="wr_ea" value="${esc(R.eveAfter)}"></div></div>
