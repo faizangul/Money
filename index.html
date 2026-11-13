@@ -304,7 +304,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=60;
+const BUILD=61;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -462,6 +462,8 @@ main{display:flex;flex-direction:column;gap:14px}
 .pill.due{background:var(--warn-soft);color:var(--warn)}
 .pill.over{background:var(--neg-soft);color:var(--neg)}
 .pill.ok{background:var(--accent-soft);color:var(--accent)}
+.pillmove{position:relative;display:inline-flex;gap:4px;flex-wrap:wrap;cursor:pointer}.pillmove>.pill:first-child{text-decoration:underline dotted;text-underline-offset:2px}
+.movedate{position:absolute;inset:0;width:100%;height:100%;opacity:0;border:0;padding:0;margin:0;font-size:16px;cursor:pointer;-webkit-appearance:none;appearance:none}
 
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:10px;border:1px solid var(--line);background:var(--surface);padding:8px 14px;font-weight:600;font-size:14px}
 @media (hover:hover) and (pointer:fine){.btn:hover{border-color:var(--accent)}}
@@ -1247,9 +1249,9 @@ function roomCard(){const R=saveRoom(null);if(!(R.inc>0))return"";const free=Mat
     <p class="small" style="margin:10px 0 0">${R.ef&&R.ef.priority&&!over?`Spare money goes to your emergency fund first${R.ef.done?`, until about <b>${monthYear(R.ef.done)}</b>`:""}.`:over?`<b>${money0(-R.left)} a month over</b> what you earn. Move a goal date or spend less.`:`<b>${money0(free)} a month</b>${R.ppm>1.05?` (${money0(Math.floor(free/R.ppm))} each payday)`:""} free for new goals.`}</p>
     <p class="small muted" style="margin:6px 0 0">${roomBasis(R)}</p></section>`}
 function payStepDays(){const p=payItem();return p?({week:7,fortnight:14,"4weeks":28}[p.cadence]||30.44):30.44}
-function payDates(from,to){const p=payItem();if(!p||!p.anchor)return[];const out=[];for(let k=-400;k<400;k++){const d=occAt(p,k);if(d>to)break;if(d>=from)out.push(d)}return out}
+function payDates(from,to){const p=payItem();if(!p||!p.anchor)return[];const out=[];for(let k=-400;k<400;k++){const o=occAt(p,k);if(o>addDays(to,MOVE_CAP))break;const d=movedTo(p,o);if(d>=from&&d<=to)out.push(d)}return out.sort()}
 function payCount(from,to){const p=payItem();if(p&&p.anchor&&p.cadence!=="year")return payDates(addDays(from,1),to).length;return Math.max(0,Math.floor((Date.parse(to+"T00:00:00Z")-Date.parse(from+"T00:00:00Z"))/864e5/30.44))}
-function nextPayDate(){const p=payItem();if(!p||!p.anchor)return null;const o=occurrences(p,today(),addDays(today(),70));return o[0]||null}
+function nextPayDate(){const p=payItem();if(!p||!p.anchor)return null;const t=today(),o=occurrences(p,addDays(t,-MOVE_CAP),addDays(t,70+MOVE_CAP)).map(d=>movedTo(p,d)).filter(d=>d>=t).sort();return o[0]||null}
 function goalOrder(list){return list.slice().sort((a,b)=>(a.date||"9999").localeCompare(b.date||"9999"))}
 function planPays(from,to){return payItem()?Math.max(1,payCount(from,to)):Math.max(1,Math.round(monthsUntil(to)-(from>today()?monthsUntil(from):0)))}
 function makePlan(g,bal,start){const st=start&&start>today()?start:today();if(!g.date||g.date<=st)return null;const have=goalHave(g,bal),rem=Math.max(0,(+g.target||0)-have);if(rem<=0)return null;
@@ -1470,10 +1472,12 @@ function upcomingIn(from,to){
   const logged=new Set(S.tx.filter(x=>x.rec).map(x=>x.rec));
   const list=[];
   for(const r of S.cfg.recurring||[]){
-    for(const d of occurrences(r,from,to)){
-      const key=r.id+"@"+d;
-      if(logged.has(key)||(r.skipped||[]).includes(d))continue;
-      list.push({r,d,key,overdue:d<t,today:d===t});
+    /* o is the usual date (it names the occurrence in key, skipped and logged entries), d the day it's expected */
+    for(const o of occurrences(r,addDays(from,-MOVE_CAP),addDays(to,MOVE_CAP))){
+      const d=movedTo(r,o);if(d<from||d>to)continue;
+      const key=r.id+"@"+o;
+      if(logged.has(key)||(r.skipped||[]).includes(o))continue;
+      list.push({r,d,o,key,overdue:d<t,today:d===t});
     }
   }
   const st0=trackStart();
@@ -1493,7 +1497,7 @@ function upcomingIn(from,to){
   const ord=x=>x.r.pay?0:x.r.type==="Transfer"?1:2;
   return list.sort((a,b)=>a.d.localeCompare(b.d)||ord(a)-ord(b));
 }
-function dueByKey(k){const d=k.slice(k.lastIndexOf("@")+1);return upcoming().find(x=>x.key===k)||(/^\d{4}-\d{2}-\d{2}$/.test(d)?upcomingIn(d,d).find(x=>x.key===k):null)}
+function dueByKey(k){const d=k.slice(k.lastIndexOf("@")+1);return upcoming().find(x=>x.key===k)||(/^\d{4}-\d{2}-\d{2}$/.test(d)?upcomingIn(addDays(d,-MOVE_CAP),addDays(d,MOVE_CAP)).find(x=>x.key===k):null)}
 function trackStart(){return S.tx.reduce((m,t)=>t.date<m?t.date:m,today())}
 function cardOwed(a,bal){bal=bal||balances();return Math.max(0,-(bal[a.name]||0))}
 function dayIn(m,day){const last=new Date(Date.UTC(+m.slice(0,4),+m.slice(5),0)).getUTCDate();return m+"-"+pad(Math.max(1,Math.min(day,last)))}
@@ -1566,8 +1570,29 @@ async function setSkip(u,on){
   const c=JSON.parse(JSON.stringify(S.cfg));let holder,field="skipped";
   if(u.r.loanId){holder=(c.loans||[]).find(l=>l.id===u.r.loanId);field="skipped"}
   else if(u.r.card||u.r.fee||u.r.interest){holder=(c.accounts||[]).find(a=>a.name===(u.r.card?u.r.to:u.r.account));field=u.r.card?"paySkipped":u.r.interest?"intSkipped":"feeSkipped"}else holder=(c.recurring||[]).find(x=>x.id===u.r.id);
-  if(!holder)return;const arr=(holder[field]||[]).filter(d=>d>=addDays(today(),-60)&&d!==u.d);if(on)arr.push(u.d);holder[field]=arr;await S.db.doc("app/config").set(c);
+  const sd=u.o||u.d;
+  if(!holder)return;const arr=(holder[field]||[]).filter(d=>d>=addDays(today(),-60)&&d!==sd);if(on)arr.push(sd);holder[field]=arr;await S.db.doc("app/config").set(c);
 }
+/* One bill or pay can be moved to another day without changing the rest: r.moved maps its usual date to the
+   new one. A move stays between the days the one before and after are expected, and within MOVE_CAP days. */
+const MOVE_CAP=31;
+function movedTo(r,o){const m=r&&r.moved&&r.moved[o];return typeof m==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(m)?m:o}
+function canMove(u){return !!u&&!!u.o&&!!(S.cfg&&(S.cfg.recurring||[]).some(x=>x.id===u.r.id))}
+function moveRange(r,o){let k=0;while(occAt(r,k)<o&&k<3000)k++;
+  const prev=k>0?movedTo(r,occAt(r,k-1)):null,next=movedTo(r,occAt(r,k+1));
+  let min=addDays(o,-MOVE_CAP),max=addDays(o,MOVE_CAP);if(min<today())min=today();
+  if(prev&&addDays(prev,1)>min)min=addDays(prev,1);if(addDays(next,-1)<max)max=addDays(next,-1);
+  return {min,max}}
+async function setMove(u,to){
+  const c=JSON.parse(JSON.stringify(S.cfg)),r=(c.recurring||[]).find(x=>x.id===u.r.id);if(!r)return;
+  const o=u.o||u.d,m=Object.assign({},r.moved);
+  for(const k in m)if(k<addDays(today(),-90)&&m[k]<addDays(today(),-90))delete m[k];
+  if(!to||to===o)delete m[o];else m[o]=to;
+  if(Object.keys(m).length)r.moved=m;else delete r.moved;
+  await S.db.doc("app/config").set(c);
+}
+function movePill(u,pill){if(!canMove(u))return pill;const {min,max}=moveRange(u.r,u.o),mv=u.d!==u.o;
+  return `<label class="pillmove" title="Change the date for this one only">${pill}${mv?`<span class="pill">Moved from ${esc(shortDate(u.o))}</span>`:""}<input type="date" class="movedate" data-key="${esc(u.key)}" value="${u.d}" min="${min}" max="${max}" aria-label="Change the date for ${esc(u.r.desc)} this time only"></label>`}
 function payItem(){return S.cfg&&(S.cfg.recurring||[]).find(r=>r.pay)}
 function occAt(r,k){return r.cadence==="fortnight"?addDays(r.anchor,14*k):r.cadence==="4weeks"?addDays(r.anchor,28*k):r.cadence==="week"?addDays(r.anchor,7*k):r.cadence==="year"?addMonths(r.anchor,12*k):r.cadence==="quarter"?addMonths(r.anchor,3*k):addMonths(r.anchor,k)}
 function payWindow(){
@@ -1715,11 +1740,11 @@ function reminderPlan(cfg,t,hm,hide){
     const rm=r.remind||{};if(!rm.on||!r.anchor)continue;
     const before=+rm.before||0,when=before?(before===1?"tomorrow":`in ${before} days`):"today";
     const amt=r.amount&&!hide?" ("+money(r.amount)+")":"",verb=r.type==="Income"?"lands":"is due";
-    for(let k=0;k<3000;k++){const d=occAt(r,k);if(addDays(d,-before)>end)break;if(d<t||(r.skipped||[]).includes(d))continue;
-      add(`${r.id}@${d}`,addDays(d,-before),rm.time,`${r.desc}${amt} ${verb} ${when}`,"Open Money Tracker to log it when it happens.")}
+    for(let k=0;k<3000;k++){const o=occAt(r,k);if(addDays(o,-before-MOVE_CAP)>end)break;const d=movedTo(r,o);if(d<t||(r.skipped||[]).includes(o))continue;
+      add(`${r.id}@${o}`,addDays(d,-before),rm.time,`${r.desc}${amt} ${verb} ${when}`,"Open Money Tracker to log it when it happens.")}
   }
   const nd=cfg.nudges||{},pay=(cfg.recurring||[]).find(r=>r.pay);
-  if(nd.payCal&&pay&&pay.anchor)for(let k=0;k<3000;k++){const d=occAt(pay,k);if(d>end)break;if(d<t)continue;
+  if(nd.payCal&&pay&&pay.anchor)for(let k=0;k<3000;k++){const o=occAt(pay,k);if(addDays(o,-MOVE_CAP)>end)break;const d=movedTo(pay,o);if(d<t)continue;
     add(`payday@${d}`,d,nd.payTime||"18:00","Payday: set money aside for your goals","Open Money Tracker and tick off this pay's goal transfers.")}
   for(const a of cfg.accounts||[]){if(a.kind!=="credit"||!+a.dueDay||!a.remindDue)continue;
     for(let m=0;m<4;m++){const due=dayIn(shiftMonth(ym(t),m),+a.dueDay);
@@ -1860,7 +1885,7 @@ function vHome(){
     h+=`<section class="card"><div class="head"><h2>Coming up</h2><button class="linkbtn" data-go="calendar">Calendar</button></div><div class="rows">`;
     for(const u of up.slice(0,6)){
       const pill=u.overdue?`<span class="pill over">${shortDate(u.d)} · overdue</span>`:u.today?`<span class="pill due">Today</span>`:`<span class="pill">${dayLabel(u.d)}</span>`;
-      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${pill} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
         <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
         <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip");
     }
@@ -1979,8 +2004,8 @@ let FMTK=null;
 const calAmt=n=>{if(!FMTK||FMTK.cur!==CUR){FMTK=new Intl.NumberFormat("en-AU",{style:"currency",currency:CUR,notation:"compact",maximumFractionDigits:1});FMTK.cur=CUR}return FMTK.format(Math.round(n))};
 const dueKind=u=>u.r.type==="Income"?"in":u.r.card||u.r.type==="Transfer"?"mv":"out";
 function dueRow(u){
-  const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:"";
-  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${pill} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+  const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:canMove(u)?`<span class="pill">Change date</span>`:"";
+  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
     <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
     <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip")}
 function vCal(){
@@ -4772,7 +4797,9 @@ document.addEventListener("click",async e=>{
           if(Array.isArray(oa.vals)||Array.isArray(a.vals)){const by={};for(const v of [...(oa.vals||[]),...(a.vals||[])]){const k=v.d;if(!by[k]||(v.t||0)>=(by[k].t||0))by[k]=v}
             a.vals=Object.values(by).sort((x,y)=>x.d.localeCompare(y.d)).slice(-150);const lv=a.vals[a.vals.length-1];if(lv){a.value=lv.v;a.valueDate=lv.d;a.cash=lv.c}delete a.holdings}
           for(const k of ["paySkipped","feeSkipped","intSkipped"])if(oa[k]||a[k])a[k]=un(oa[k],a[k])}
-        for(const r of d.recurring){const or=(o.recurring||[]).find(x=>x.id===r.id);if(or)r.skipped=un(or.skipped,r.skipped)}
+        for(const r of d.recurring){const or=(o.recurring||[]).find(x=>x.id===r.id);if(or)r.skipped=un(or.skipped,r.skipped);
+          /* one-off moves are made outside Settings, so the saved copy wins; a new date or rhythm drops them */
+          delete r.moved;if(or&&or.moved&&or.anchor===r.anchor&&or.cadence===r.cadence)r.moved=or.moved}
         for(const l of d.loans){const ol=(o.loans||[]).find(x=>x.id===l.id);if(ol)l.skipped=un(ol.skipped,l.skipped)}
         if(d.impRules&&(Object.keys(aRen).length||Object.keys(cRen).length)){for(const k in d.impRules){const [t,v]=String(d.impRules[k]).split("|");if(!v)continue;d.impRules[k]=t+"|"+((t==="E"||t==="I")?rC(v):(t==="T>"||t==="T<")?rA(v):v)}}
         if(d.taxCats)d.taxCats=d.taxCats.map(rC)}
@@ -4932,6 +4959,13 @@ document.addEventListener("change",e=>{
     if(/recurring\.\d+\.pay/.test(el.dataset.s)&&el.checked){const i=+el.dataset.s.split(".")[1];S.draft.recurring.forEach((r,j)=>{if(j!==i)r.pay=false});render()}
   }
 });
+document.addEventListener("change",async e=>{const el=e.target;if(!el.classList||!el.classList.contains("movedate"))return;
+  const u=dueByKey(el.dataset.key);if(!canMove(u))return;const to=el.value,{min,max}=moveRange(u.r,u.o),was=u.d!==u.o?u.d:null;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(to)){el.value=u.d;return}
+  if(to<min||to>max){el.value=u.d;toast(`Pick a day from ${shortDate(min)} to ${shortDate(max)}`);return}
+  if(to===u.d)return;
+  try{await setMove(u,to);toastUndo(to===u.o?`${u.r.desc} is back on ${shortDate(to)}`:`${u.r.desc} moved to ${shortDate(to)}, this time only`,()=>setMove(u,was))}catch(err){el.value=u.d;toast(dbMsg(err))}});
+document.addEventListener("click",e=>{const el=e.target;if(el&&el.classList&&el.classList.contains("movedate")&&el.showPicker)try{el.showPicker()}catch(x){}});
 document.addEventListener("input",e=>{if(Y&&e.target.id==="ytext"){Y.text=e.target.value;clearTimeout(window.__ys);window.__ys=setTimeout(()=>LS.set("mt.storydraft",Object.assign({},Y,{err:""})),400)}
   if(F&&F.dup&&e.target.closest&&e.target.closest("#txform")){F.dup=null;F.dupOk=null;const n=document.querySelector("#txform .nudge.warn");if(n)n.remove()}
   if(F&&F.err&&e.target.closest&&e.target.closest("#txform")){F.err="";const er=document.querySelector("#txform .err");if(er)er.remove()}
