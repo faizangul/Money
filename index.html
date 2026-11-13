@@ -304,7 +304,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=61;
+const BUILD=62;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -1119,12 +1119,13 @@ const CAT_WORDS=/interest|fee|wage|salary|pay|investment income/i;
 const catWords=c=>c.name+(c.aka?" "+c.aka:"");
 const accounts=()=>S.cfg?S.cfg.accounts:[];
 function roleCat(role){const c=cats().find(c=>c.role===role);return c?c.name:null}
-const FEATS=[["investments","Investments","ETFs, shares or a brokerage account"],["goals","Savings goals","Saving towards something by a date"],["people","IOUs with people","Lending and borrowing with friends and family"],["loans","Loans","A loan you're paying down"],["remit","Money sent home","Sending money to family overseas"],["trading","Prop trading","Prop firm accounts, fees and payouts"]];
+const FEATS=[["investments","Investments","ETFs, shares or a brokerage account"],["goals","Savings goals","Saving towards something by a date"],["people","IOUs with people","Lending and borrowing with friends and family"],["loans","Loans","A loan you're paying down"],["bnpl","Afterpay","Buy now, pay later purchases paid off in parts"],["remit","Money sent home","Sending money to family overseas"],["trading","Prop trading","Prop firm accounts, fees and payouts"]];
 const KINDS=[["everyday","Everyday"],["savings","Savings"],["credit","Credit card"],["cash","Cash"],["investment","Investments"],["super","Super"]];
 function feat(n){const f=(S.cfg&&S.cfg.features)||{};if(n in f)return !!f[n];
   if(n==="trading")return S.props.length>0||!!roleCat("propfees");
   if(n==="investments")return accounts().some(a=>a.kind==="investment");
   if(n==="goals")return ((S.cfg&&S.cfg.goals)||[]).length>0;
+  if(n==="bnpl")return ((S.cfg&&S.cfg.bnpl)||[]).length>0;
   return true}
 /* ---------- bank badges: the bank's name on its brand colour (no logos) ---------- */
 /* m matches what people type in the Bank box; strict ones are too common as words to guess from an account name */
@@ -1494,9 +1495,18 @@ function upcomingIn(from,to){
   if(feat("loans"))for(const l of loanRows()){if(!l.due||!+l.perMonth||l.owing<=0.5)continue;
     const r={id:"loan:"+l.id,desc:(l.name||"Loan")+" repayment",type:"Expense",category:roleCat("loan")||"Loan repayment",account:l.from||payFrom({}),amount:+l.perMonth,cadence:l.cad||"month",anchor:l.due,skipped:l.skipped||[],loanId:l.id};
     for(const d of occurrences(r,(from>st0?from:st0),to)){const key=r.id+"@"+d;if(logged.has(key)||r.skipped.includes(d))continue;list.push({r,d,key,overdue:d<t,today:d===t})}}
+  if(feat("bnpl"))for(const b of S.cfg.bnpl||[]){const r=bnplItem(b);if(!r)continue;
+    for(const d of bnplDates(b)){if(d<from||d>to)continue;const key=r.id+"@"+d;if(logged.has(key)||r.skipped.includes(d))continue;list.push({r,d,key,overdue:d<t,today:d===t})}}
   const ord=x=>x.r.pay?0:x.r.type==="Transfer"?1:2;
   return list.sort((a,b)=>a.d.localeCompare(b.d)||ord(a)-ord(b));
 }
+/* Afterpay: one entry per purchase, with the payments still to go (count) from the next one (next), each the same amount.
+   Each payment is logged as spending in the purchase's category when it's taken; the purchase itself isn't logged. */
+function bnplDates(b){const n=Math.max(0,Math.min(60,Math.round(+b.count||0)));if(!n||!/^\d{4}-\d{2}-\d{2}$/.test(b.next||""))return[];const r={anchor:b.next,cadence:b.cad||"fortnight"},out=[];for(let k=0;k<n;k++)out.push(occAt(r,k));return out}
+function bnplItem(b){if(!(+b.amount>0)||!b.next)return null;return {id:"bnpl:"+b.id,desc:"Afterpay"+(b.name?" · "+b.name:""),type:"Expense",category:b.category||"",account:b.from&&accounts().some(a=>a.name===b.from)?b.from:payFrom({}),amount:r2(+b.amount),cadence:b.cad||"fortnight",anchor:b.next,skipped:b.skipped||[],bnplId:b.id}}
+/* payments still to make on a purchase, as of a date: not yet logged by then, and not skipped */
+function bnplLeft(b,upTo){const t0=upTo||today(),paid=new Set(S.tx.filter(x=>x.rec&&x.date<=t0).map(x=>x.rec)),sk=b.skipped||[];
+  const left=bnplDates(b).filter(d=>!paid.has("bnpl:"+b.id+"@"+d)&&!sk.includes(d));return {n:left.length,owing:r2(left.length*(+b.amount||0)),next:left.find(d=>d>=today())||left[0]||null}}
 function dueByKey(k){const d=k.slice(k.lastIndexOf("@")+1);return upcoming().find(x=>x.key===k)||(/^\d{4}-\d{2}-\d{2}$/.test(d)?upcomingIn(addDays(d,-MOVE_CAP),addDays(d,MOVE_CAP)).find(x=>x.key===k):null)}
 function trackStart(){return S.tx.reduce((m,t)=>t.date<m?t.date:m,today())}
 function cardOwed(a,bal){bal=bal||balances();return Math.max(0,-(bal[a.name]||0))}
@@ -1569,6 +1579,7 @@ function isCard(name){const a=accounts().find(x=>x.name===name);return !!a&&a.ki
 async function setSkip(u,on){
   const c=JSON.parse(JSON.stringify(S.cfg));let holder,field="skipped";
   if(u.r.loanId){holder=(c.loans||[]).find(l=>l.id===u.r.loanId);field="skipped"}
+  else if(u.r.bnplId){holder=(c.bnpl||[]).find(b=>b.id===u.r.bnplId);field="skipped"}
   else if(u.r.card||u.r.fee||u.r.interest){holder=(c.accounts||[]).find(a=>a.name===(u.r.card?u.r.to:u.r.account));field=u.r.card?"paySkipped":u.r.interest?"intSkipped":"feeSkipped"}else holder=(c.recurring||[]).find(x=>x.id===u.r.id);
   const sd=u.o||u.d;
   if(!holder)return;const arr=(holder[field]||[]).filter(d=>d>=addDays(today(),-60)&&d!==sd);if(on)arr.push(sd);holder[field]=arr;await S.db.doc("app/config").set(c);
@@ -1885,7 +1896,7 @@ function vHome(){
     h+=`<section class="card"><div class="head"><h2>Coming up</h2><button class="linkbtn" data-go="calendar">Calendar</button></div><div class="rows">`;
     for(const u of up.slice(0,6)){
       const pill=u.overdue?`<span class="pill over">${shortDate(u.d)} · overdue</span>`:u.today?`<span class="pill due">Today</span>`:`<span class="pill">${dayLabel(u.d)}</span>`;
-      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
         <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
         <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip");
     }
@@ -2005,7 +2016,7 @@ const calAmt=n=>{if(!FMTK||FMTK.cur!==CUR){FMTK=new Intl.NumberFormat("en-AU",{s
 const dueKind=u=>u.r.type==="Income"?"in":u.r.card||u.r.type==="Transfer"?"mv":"out";
 function dueRow(u){
   const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:canMove(u)?`<span class="pill">Change date</span>`:"";
-  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?"≈ "+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
     <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
     <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip")}
 function vCal(){
@@ -2871,6 +2882,7 @@ function netWorthAt0(date){
   if(feat("people")){const p={};for(const t of S.tx){if(t.date>date||!/^IOU/.test(t.type))continue;const n=(t.person||"").trim()||"Someone";p[n]=(p[n]||0)+(t.type==="IOU out"?1:-1)*(+t.amount||0)}
     for(const [n,v] of Object.entries(p)){if(v>0.005){g.owedTo.push({name:n,v});assets+=v}else if(v<-0.005){g.oweTo.push({name:n,v:-v});debts+=-v}}}
   if(feat("loans")){for(const l of (S.cfg.loans||[])){const ow=loanCalc(l,date).owing;if(ow>0.005){g.loans.push({name:l.name||"Loan",v:ow});debts+=ow}}}
+  if(feat("bnpl")){for(const b of (S.cfg.bnpl||[])){const ow=bnplLeft(b,date).owing;if(ow>0.005){g.loans.push({name:"Afterpay"+(b.name?" · "+b.name:""),v:ow});debts+=ow}}}
   if(false){const lc=roleCat("loan");for(const l of (S.cfg.loans||[])){const nm=(l.name||"").toLowerCase();
     const paid=S.tx.filter(t=>t.date<=date&&t.type==="Expense"&&t.category===lc&&nm&&(((t.person||"").toLowerCase()===nm)||(t.desc||"").toLowerCase().includes(nm))).reduce((s2,t)=>s2+(+t.amount||0),0);
     const ow=Math.max(0,(+l.balance||0)-paid);if(ow>0.005){g.loans.push({name:l.name||"Loan",v:ow});debts+=ow}}}
@@ -3371,6 +3383,7 @@ function renameCatCheck(raw,from,list){const self=list.find(c=>c.name===from);if
 function renameCatIn(cfg,from,to){const keep=(cfg.categories||[]).find(c=>(c._orig||c.name)===from);
   if(keep){keep.name=to;if(keep._orig)keep._orig=to;if(CAT_WORDS.test(from)&&!CAT_WORDS.test(to))keep.aka=[keep.aka,from].filter(Boolean).join(" ")}
   (cfg.recurring||[]).forEach(r=>{if(r.category===from)r.category=to});
+  (cfg.bnpl||[]).forEach(b=>{if(b.category===from)b.category=to});
   (cfg.goals||[]).forEach(g=>{if(g.cat===from)g.cat=to});
   (cfg.doneGoals||[]).forEach(g=>{if(g.cat===from)g.cat=to});
   (cfg.accounts||[]).forEach(a=>{if(a.sgCat===from)a.sgCat=to});
@@ -3755,7 +3768,7 @@ function makeDraft(){const d0=JSON.parse(JSON.stringify(S.cfg));(d0.recurring||[
     d0.profile=Object.assign({name:"",jobTitle:"",status:""},d0.profile||{});d0.currency=d0.currency||"AUD";d0.appearance=Object.assign({mode:"system",palette:"eucalyptus"},d0.appearance||S.look||{});
     d0.nudges=Object.assign({daily:true,budget:true,threshold:90,cal:false,calTime:"20:00"},d0.nudges||{});
     d0.method=d0.method||"none";d0.fire=Object.assign({rate:4,ret:5,super:0,includeSavings:false},d0.fire||{});
-    d0.goals=d0.goals||[];d0.loans=d0.loans||[];d0.recurring=d0.recurring||[];d0.accounts.forEach(a=>{a.kind=a.kind||guessKind(a);a._orig=a.name});(d0.categories||[]).forEach(c=>{c._orig=c.name})
+    d0.goals=d0.goals||[];d0.loans=d0.loans||[];d0.bnpl=d0.bnpl||[];d0.recurring=d0.recurring||[];d0.accounts.forEach(a=>{a.kind=a.kind||guessKind(a);a._orig=a.name});(d0.categories||[]).forEach(c=>{c._orig=c.name})
   return d0}
 function vSettings(){
   if(!S.draft)S.draft=makeDraft();
@@ -3914,6 +3927,18 @@ function vSettings(){
   h+=`</div><button class="btn sm" data-act="sadd" data-k="loans" style="margin-top:6px">Add loan</button>
    <p class="small muted" style="margin:10px 0 0">Repayments you log as Loan repayment, with the lender's name, come off the balance automatically.</p></section>`;
   }
+  mark("bnpl");
+  if(d.features.bnpl){
+  h+=`<section class="card"><div class="head"><h2>Afterpay</h2></div><div class="elist">`;
+  d.bnpl.forEach((b,i)=>{const lf=S.cfg&&(S.cfg.bnpl||[]).some(x=>x.id===b.id)?bnplLeft(b):null;
+    h+=`<div class="erow"><div class="erow-head"><input class="inp" type="text" id="bn${i}" data-s="bnpl.${i}.name" value="${esc(b.name||"")}" aria-label="What you bought" placeholder="What you bought, e.g. Shoes">${XBTN("bnpl",i,true)}</div>
+     <div class="two">${FL("Each payment","ba"+i,MONEY("ba"+i,`bnpl.${i}.amount`,b.amount))}${FL("Payments left","bc"+i,`<input class="inp" type="number" inputmode="numeric" min="1" max="60" step="1" id="bc${i}" data-s="bnpl.${i}.count" value="${b.count}">`)}</div>
+     <div class="two">${FL("Next payment","bx"+i,`<input class="inp" type="date" id="bx${i}" data-s="bnpl.${i}.next" value="${b.next||""}">`)}${FL("How often","bcad"+i,SEL("bcad"+i,`bnpl.${i}.cad`,[["fortnight","Fortnightly"],["week","Weekly"],["month","Monthly"]].map(([k,v])=>`<option value="${k}"${(b.cad||"fortnight")===k?" selected":""}>${v}</option>`).join("")))}</div>
+     <div class="two">${FL("Category","bcat"+i,SEL("bcat"+i,`bnpl.${i}.category`,catOpts(b.category,"Expense")))}${FL("Paid from","bfrom"+i,SEL("bfrom"+i,`bnpl.${i}.from`,`<option value="">Main account</option>`+acctOpts(b.from)))}</div>
+     ${lf?`<p class="small muted" style="margin:6px 0 0">${lf.n?`${lf.n} payment${lf.n===1?"":"s"} to go · ${money(lf.owing)} left${lf.next?" · next "+shortDate(lf.next):""}`:"Paid off."}</p>`:""}</div>`});
+  h+=`</div><button class="btn sm" data-act="sadd" data-k="bnpl" style="margin-top:6px">Add Afterpay purchase</button>
+   <p class="small muted" style="margin:10px 0 0">Each payment shows in Coming up and counts in Safe to spend. Log each payment when Afterpay takes it, and don't log the purchase itself, so it isn't counted twice. For a new purchase, the first payment is the one taken at checkout.</p></section>`;
+  }
   mark("_save");
   h+=`<div class="btnrow"><button class="btn primary" data-act="ssave" style="flex:1">Save settings</button><button class="btn" data-act="sreset">Discard changes</button></div>
   <p class="err" id="serr" hidden></p>`;
@@ -3925,7 +3950,8 @@ function vSettings(){
       ["budget","Monthly budget",`${money0(inB-exB)} left a month · ${+d.emergencyMonths||0}-month emergency fund`,"pie"],
       ["bills","Regular bills and pay",`${d.recurring.length} item${pl(d.recurring.length)}`,"cal"],
       ...(d.features.goals?[["goals","Goals",gN?`${gN} goal${pl(gN)}`:"None yet","goal"]]:[]),
-      ...(d.features.loans?[["loans","Loans",lN?`${lN} loan${pl(lN)}`:"None yet","loan"]]:[])]],
+      ...(d.features.loans?[["loans","Loans",lN?`${lN} loan${pl(lN)}`:"None yet","loan"]]:[]),
+      ...(d.features.bnpl?[["bnpl","Afterpay",(()=>{const on=S.cfg?(S.cfg.bnpl||[]).map(b=>bnplLeft(b)).filter(x=>x.n):[];return on.length?`${on.length} on the go · ${money0(on.reduce((s2,x)=>s2+x.owing,0))} left`:"None yet"})(),"cal"]]:[])]],
     ["The app",[["you","Profile and look",[d.profile.name,(PALETTES.find(x=>x[0]===d.appearance.palette)||[,""])[1]].filter(Boolean).join(" · ")||"Name, currency, theme","user"],
       ["reminders","Reminders",[d.nudges.daily?"Daily check-in on Home":"",d.nudges.budget?`Budget warnings at ${d.nudges.threshold}%`:""].filter(Boolean).join(" · ")||"Off","bell"],
       ["track","What to track",`${fOn} of ${FEATS.length} turned on`,"tog"],
@@ -4719,7 +4745,7 @@ document.addEventListener("click",async e=>{
       if(!F.armed){readForm();F.armed=true;drawSheet();return}
       try{const t0=S.tx.find(x=>x.id===F.id);await S.db.doc("tx/"+F.id).delete();await skipAutoInterest(t0).catch(()=>false);toast("Deleted");F=null;drawSheet()}catch(err){F.err=dbMsg(err);F.armed=false;drawSheet()}break;
     case "edit":{const t=S.tx.find(x=>x.id===a.dataset.id);if(t)openTx({...t,amount:String(Math.abs(+t.amount||0)),neg:(+t.amount||0)<0,person:t.person||"",to:t.to||"",touched:{},step:3,ready:true});break}
-    case "logrec":{const u=dueByKey(a.dataset.key);if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u)openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:u.r.amount?String(u.r.amount):"",touched:{type:1,category:1,account:1,to:1}});break}
+    case "logrec":{const u=dueByKey(a.dataset.key);if(u&&u.r.bnplId){openTx({type:"Expense",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:String(u.r.amount),date:u.d<=today()?u.d:today(),due:u.d,rec:u.key,ready:true,hintAmt:String(u.r.amount),step:3,touched:{type:1,category:1,account:1}});break}if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u)openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:u.r.amount?String(u.r.amount):"",touched:{type:1,category:1,account:1,to:1}});break}
     case "skiprec":{const u=dueByKey(a.dataset.key);if(!u)return;try{await setSkip(u,true);toastUndo(`Skipped ${u.r.desc}`,()=>setSkip(u,false))}catch(err){toast(dbMsg(err))}break}
     case "actm":S.actMonth=a.dataset.m;S.actLim=0;render();break;
     case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
@@ -4753,6 +4779,7 @@ document.addEventListener("click",async e=>{
       if(k==="categories")d.categories.push({name:"",kind:a.dataset.kind||"Expense",essential:false,budget:0,role:""});
       if(k==="recurring")d.recurring.push({id:"r"+Date.now().toString(36),desc:"New bill",type:"Expense",category:(d.categories.find(c=>c.kind==="Expense")||{}).name||"",account:(d.accounts[0]||{}).name||"",amount:0,cadence:"month",anchor:today(),skipped:[],remind:{on:false,before:1,time:"09:00"}});
       if(k==="goals")d.goals.push({id:"g"+Date.now().toString(36),name:"",target:0,date:"",account:"",saved:0});
+      if(k==="bnpl")d.bnpl.push({id:"b"+Date.now().toString(36),name:"",amount:0,count:4,next:today(),cad:"fortnight",category:((d.categories.find(c=>c.kind==="Expense"&&/shop|cloth/i.test(c.name))||d.categories.find(c=>c.kind==="Expense"))||{}).name||"",from:"",skipped:[]});
       if(k==="loans")d.loans.push({id:"l"+Date.now().toString(36),name:"",balance:0,rate:0,perMonth:0,cad:"month",due:"",from:"",start:today(),notes:""});
       render();break}
     case "sdel":S.draft[a.dataset.k].splice(+a.dataset.i,1);markDraft();render();break;
@@ -4766,18 +4793,20 @@ document.addEventListener("click",async e=>{
       const bad=names.some(n=>!n)||!uq(names)?"Each account needs a unique name.":cn.some(n=>!n)||!uq(cn)?"Each category needs a unique name.":badX?`“${badX.desc}” needs a different account to move the money into.`:"";
       if(bad){er.textContent=bad;er.hidden=false;return}
       d.accounts.forEach(x=>{x.name=x.name.trim();x.opening=r2(x.opening);if(x.kind==="credit"){x.limit=r2(x.limit);x.dueDay=Math.max(0,Math.min(31,Math.round(+x.dueDay||0)));x.rate=+x.rate||0}x.fee=r2(x.fee);if(!+x.fee)delete x.feeDate;if(x.intOn){x.intRate=+x.intRate||0;x.intCad=x.intCad||"month"}});d.categories.forEach(x=>{x.name=x.name.trim();x.budget=r2(x.budget)});
+      d.bnpl=d.bnpl||[];d.bnpl.forEach(x=>{x.amount=r2(+x.amount||0);x.count=Math.max(0,Math.min(60,Math.round(+x.count||0)));x.id=x.id||"b"+Math.random().toString(36).slice(2,8);x.cad=x.cad||"fortnight";x.skipped=x.skipped||[]});
       d.recurring.forEach(x=>x.amount=r2(x.amount));d.loans.forEach(x=>{x.balance=r2(x.balance);x.rate=+x.rate||0;x.perMonth=r2(x.perMonth);x.id=x.id||"l"+Math.random().toString(36).slice(2,8);x.start=x.start||today()});
       /* a renamed account or category carries its bills, goals and loans with it */
       const aRen={},cRen={};d.accounts.forEach(x=>{if(x._orig&&x._orig!==x.name)aRen[x._orig]=x.name});d.categories.forEach(x=>{if(x._orig&&x._orig!==x.name)cRen[x._orig]=x.name});
       const rA=n=>n&&aRen[n]?aRen[n]:n,rC=n=>n&&cRen[n]?cRen[n]:n;
       d.recurring.forEach(r=>{r.account=rA(r.account);if(r.to)r.to=rA(r.to);r.category=rC(r.category)});
       (d.goals||[]).forEach(g=>{if(g.account)g.account=rA(g.account);if(g.cat)g.cat=rC(g.cat)});
-      d.loans.forEach(l=>{if(l.from)l.from=rA(l.from)});
+      d.loans.forEach(l=>{if(l.from)l.from=rA(l.from)});d.bnpl.forEach(b=>{if(b.from)b.from=rA(b.from);if(b.category)b.category=rC(b.category)});
       d.accounts.forEach(a=>{if(a.payFrom)a.payFrom=rA(a.payFrom);if(a.sgCat)a.sgCat=rC(a.sgCat)});
       {const have=new Set(d.accounts.map(x=>x.name)),miss=[];
         d.recurring.forEach(r=>{if((r.account&&!have.has(r.account))||(r.type==="Transfer"&&r.to&&!have.has(r.to)))miss.push(`the bill “${r.desc||"New bill"}”`)});
         (d.goals||[]).filter(g=>(g.name||"").trim()&&goalWhere(g)!=="else"&&g.account&&!have.has(g.account)).forEach(g=>miss.push(`the goal “${g.name}”`));
         d.loans.filter(l=>l.from&&!have.has(l.from)).forEach(l=>miss.push(`the loan “${l.name||"Loan"}”`));
+        d.bnpl.filter(b=>b.from&&!have.has(b.from)).forEach(b=>miss.push(`the Afterpay purchase “${b.name||"Afterpay"}”`));
         if(miss.length){er.textContent=`${miss[0][0].toUpperCase()+miss[0].slice(1)} uses an account you removed. Pick another account for it, then save.`;er.hidden=false;return}}
       {const need=[];if(d.accounts.some(a=>+a.fee>0)&&!d.categories.some(c=>c.kind==="Expense"&&/fee/i.test(catWords(c))))need.push(["Bank fees","Expense",""]);if(d.features.trading){need.push(["Trading – Payout","Income","payout"],["Trading – Prop firm fees","Expense","propfees"])}
         if(d.features.loans)need.push(["Loan repayment","Expense","loan"]);if(d.features.investments&&!d.categories.some(c=>/\binvestment income\b/i.test(catWords(c))))need.push(["Investment income","Income",""]);if(d.accounts.some(a=>a.intOn)&&!d.categories.some(c=>c.kind==="Income"&&/interest/i.test(catWords(c))))need.push(["Interest","Income",""]);if(d.features.remit)need.push(["Sent home","Expense","remit"]);
@@ -4801,6 +4830,7 @@ document.addEventListener("click",async e=>{
           /* one-off moves are made outside Settings, so the saved copy wins; a new date or rhythm drops them */
           delete r.moved;if(or&&or.moved&&or.anchor===r.anchor&&or.cadence===r.cadence)r.moved=or.moved}
         for(const l of d.loans){const ol=(o.loans||[]).find(x=>x.id===l.id);if(ol)l.skipped=un(ol.skipped,l.skipped)}
+        for(const b of d.bnpl){const ob=(o.bnpl||[]).find(x=>x.id===b.id);if(ob)b.skipped=un(ob.skipped,b.skipped)}
         if(d.impRules&&(Object.keys(aRen).length||Object.keys(cRen).length)){for(const k in d.impRules){const [t,v]=String(d.impRules[k]).split("|");if(!v)continue;d.impRules[k]=t+"|"+((t==="E"||t==="I")?rC(v):(t==="T>"||t==="T<")?rA(v):v)}}
         if(d.taxCats)d.taxCats=d.taxCats.map(rC)}
       d.accounts.forEach(x=>delete x._orig);d.categories.forEach(x=>delete x._orig);
