@@ -305,7 +305,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=64;
+const BUILD=65;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -951,6 +951,7 @@ details.more[open] summary{margin-bottom:10px}
 .calsum{grid-template-columns:repeat(3,minmax(0,1fr));margin:4px 0 6px}.calsum .pos{color:var(--pos)}.calsum .neg{color:var(--neg)}
 .daynet{font-size:17px;font-variant-numeric:tabular-nums}.daynet.pos{color:var(--pos)}.daynet.neg{color:var(--neg)}
 .calc .dots i.sh,.callegend i.sh{width:10px;height:3px;border-radius:2px;background:var(--ink);opacity:.55;align-self:center}.calc.sel .num.exp{opacity:.85}
+.rowtap{cursor:pointer;border-radius:8px}.rowtap:active{opacity:.6}.rowtap:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .calc.pad{background:none}.calc b{font-size:13px}.calc .num{font-size:10px;line-height:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .calc .out{color:var(--neg)}.calc .in{color:var(--pos)}
 .calc.today{box-shadow:inset 0 0 0 2px var(--accent)}.calc.sel{background:var(--accent);color:var(--accent-ink)}.calc.sel .out,.calc.sel .in{color:inherit}
@@ -1896,7 +1897,7 @@ function vHome(){
       <div><b>${money0(nw.debts)}</b><small>You owe</small></div>
       ${dl===null?"":`<div><b>${(dl>=0?"+":"−")+money0(Math.abs(dl))}</b><small>Since ${shortDate(pe)}</small></div>`}
     </div></button>`;
-  const B={},HO=[];let hk="_top";const mark=k=>{B[hk]=(B[hk]||"")+h;h="";hk=k;HO.push(k)};mark("work");h+=wkHomeCard();mark("safe");h+=safeHtml();mark("month");
+  const B={},HO=[];let hk="_top";const mark=k=>{B[hk]=(B[hk]||"")+h;h="";hk=k;HO.push(k)};mark("safe");h+=safeHtml();mark("work");h+=wkHomeCard();mark("month");
   h+=`<section class="card"><div class="head"><h2>${mLong(m)}${cur?" so far":""}</h2><span class="small muted">${bad?"Shortfall":"Left over"}</span></div>
     <div class="mbig num${bad?" amt neg":""}">${money(st.surplus)}</div>
     <div class="stats num" style="grid-template-columns:repeat(3,minmax(0,1fr))"><div class="stat"><b>${money0(st.inc)}</b><small>Money in</small></div><div class="stat"><b>${money0(st.out)}</b><small>Money out</small></div>
@@ -1909,11 +1910,9 @@ function vHome(){
     h+=`<section class="card"><div class="head"><h2>Coming up</h2><button class="linkbtn" data-go="calendar">Calendar</button></div><div class="rows">`;
     for(const u of up.slice(0,6)){
       const pill=u.overdue?`<span class="pill over">${shortDate(u.d)} · overdue</span>`:u.today?`<span class="pill due">Today</span>`:`<span class="pill">${dayLabel(u.d)}</span>`;
-      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money0(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
-        <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
-        <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip");
+      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main rowtap" data-act="logrec" data-key="${esc(u.key)}" role="button" tabindex="0" aria-label="Log ${esc(u.r.desc)}"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money0(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div><span class="chev" aria-hidden="true">›</span></div>`,"skip");
     }
-    h+=`</div></section>`;
+    h+=`</div><p class="small muted" style="margin:8px 0 0">Tap to log it · swipe left to skip</p></section>`;
   }
 
   mark("prop");
@@ -2041,9 +2040,7 @@ const sgn=n=>(n>0?"+":n<0?"−":"")+money(Math.abs(n));
 const dueKind=u=>u.r.type==="Income"?"in":u.r.card||u.r.type==="Transfer"?"mv":"out";
 function dueRow(u){const ro=u.r.pay?rosterFor(u.d):null;
   const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:canMove(u)?`<span class="pill">Change date</span>`:"";
-  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money0(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div>${ro?`<div class="s" style="white-space:normal">${rosterNote(ro,+u.r.amount||0)}</div>`:""}</div>
-    <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
-    <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip")}
+  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main rowtap" data-act="logrec" data-key="${esc(u.key)}" role="button" tabindex="0" aria-label="Log ${esc(u.r.desc)}"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money0(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div>${ro?`<div class="s" style="white-space:normal">${rosterNote(ro,+u.r.amount||0)}</div>`:""}</div><span class="chev" aria-hidden="true">›</span></div>`,"skip")}
 /* hours, how far the roster reaches, and the gap to the usual pay */
 function rosterNote(ro,usual){const diff=r2(ro.take-usual),au=AU();
   return `${ro.hrs} h rostered${au?` · ${money0(ro.gross)} before tax`:""}${usual&&Math.abs(diff)>=1?` · ${diff>0?money0(diff)+" more":money0(-diff)+" less"} than your usual ${money0(usual)}`:""}${ro.partial?` · shifts only logged to ${esc(shortDate(ro.partial))}`:""}`}
@@ -2074,7 +2071,7 @@ function vCal(){
       ${empty?`<p class="muted" style="margin:0">Nothing on this day.</p>`:""}
       ${D.shifts.length?`<div class="rows menu">${D.shifts.map(s=>{const p=shiftPay(s,w);return `<button class="row" data-go="work"><div class="main"><div class="t">Shift ${fmtT(s.start)} – ${fmtT(s.end)}</div><div class="s">${p.h} h · ${money(p.pay)} before tax</div></div><span class="chev">›</span></button>`}).join("")}</div>`:""}
       ${D.rp?`<div class="rows menu"><button class="row" data-go="work"><div class="main"><div class="t">Pay from your roster</div><div class="s" style="white-space:normal"><span class="num">≈ ${money0(D.rp.take)}</span> · ${rosterNote(D.rp,0)}</div></div><span class="chev">›</span></button></div>`:""}
-      ${D.due.length?`<div class="rows">${D.due.map(dueRow).join("")}</div>`:""}${D.tx.length?`<div class="rows">${D.tx.map(txRow).join("")}</div>`:""}</section>`}
+      ${D.due.length?`<div class="rows">${D.due.map(dueRow).join("")}</div><p class="small muted" style="margin:6px 0 0">Tap to log it · swipe left to skip</p>`:""}${D.tx.length?`<div class="rows">${D.tx.map(txRow).join("")}</div>`:""}</section>`}
   return h}
 /* ---------- trips: a name, dates and a budget; expenses in those dates can be tagged to it ---------- */
 const trips=()=>((S.cfg&&S.cfg.trips)||[]).slice().sort((a,b)=>b.start.localeCompare(a.start));
@@ -4120,6 +4117,7 @@ function drawSheet(){
    <div class="sh"><h2>${title}</h2><button type="button" class="x" data-act="close" aria-label="Close">×</button></div>
    ${stepBar(st,3)}
    ${F.rec&&F.due&&F.due!==today()?`<p class="small muted" style="margin:-4px 0 0">${F.due<today()?`Was due ${dayLabel(F.due)}, so it's dated today, when you paid.`:`Due ${dayLabel(F.due)}. Paying early is fine; it's dated today.`} You can change the date on the last step.</p>`:""}
+   ${F.rec&&!F.id?`<p style="margin:-2px 0 0"><button type="button" class="linkbtn" data-act="skipfromsheet">Not this time? Skip it</button></p>`:""}
    ${F.restored?`<div class="nudge" style="padding:8px 10px 8px 12px"><p class="small">Picked up your unsaved entry.</p><button type="button" class="btn sm" data-act="txfresh">Start fresh</button></div>`:""}
    <div class="stepbody${stepAnim()}">${body}</div>
    ${F.err?`<p class="err" role="alert" style="margin:0">${esc(F.err)}</p>`:""}
@@ -4776,6 +4774,7 @@ document.addEventListener("click",async e=>{
     if(k==="category"&&F.step===2){if(!F.touched.account||!F.id){const la=lastAccountFor(v);if(la&&!F.rec)F.account=la}F.step=3}
     drawSheet();return}
   if(fb&&P&&fb.closest("#propform")){e.preventDefault();readProp();P[fb.dataset.f]=fb.dataset.v;drawProp();return}
+  if(e.target.closest&&e.target.closest(".pillmove"))return;
   const a=e.target.closest("[data-act]");if(!a)return;
   const act=a.dataset.act;
   if(act==="closebg"&&e.target!==a)return;
@@ -4798,6 +4797,7 @@ document.addEventListener("click",async e=>{
       try{const t0=S.tx.find(x=>x.id===F.id);await S.db.doc("tx/"+F.id).delete();await skipAutoInterest(t0).catch(()=>false);toast("Deleted");F=null;drawSheet()}catch(err){F.err=dbMsg(err);F.armed=false;drawSheet()}break;
     case "edit":{const t=S.tx.find(x=>x.id===a.dataset.id);if(t)openTx({...t,amount:String(Math.abs(+t.amount||0)),neg:(+t.amount||0)<0,person:t.person||"",to:t.to||"",touched:{},step:3,ready:true});break}
     case "logrec":{const u=dueByKey(a.dataset.key);if(u&&u.r.bnplId){openTx({type:"Expense",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:String(u.r.amount),date:u.d<=today()?u.d:today(),due:u.d,rec:u.key,ready:true,hintAmt:String(u.r.amount),step:3,touched:{type:1,category:1,account:1}});break}if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u){const ro=u.r.pay?rosterFor(u.d):null,hint=ro?ro.take:u.r.amount;openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:hint?String(hint):"",touched:{type:1,category:1,account:1,to:1}})}break}
+    case "skipfromsheet":{const k=F&&F.rec;closeSheets();const u=k&&dueByKey(k);if(!u)return;try{await setSkip(u,true);toastUndo(`Skipped ${u.r.desc}`,()=>setSkip(u,false))}catch(err){toast(dbMsg(err))}render();break}
     case "skiprec":{const u=dueByKey(a.dataset.key);if(!u)return;try{await setSkip(u,true);toastUndo(`Skipped ${u.r.desc}`,()=>setSkip(u,false))}catch(err){toast(dbMsg(err))}break}
     case "actm":S.actMonth=a.dataset.m;S.actLim=0;render();break;
     case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
@@ -5077,7 +5077,9 @@ function pickFan(t,el){const host=$("#fanhost"),btn=$("nav.tabs .add");document.
 function closeFan(now){const host=$("#fanhost"),btn=$("nav.tabs .add");document.body.classList.remove("fanon");if(btn){btn.setAttribute("aria-expanded","false");btn.setAttribute("aria-label","Add")}if(!host)return;
   if(now){host.remove();return}const sc=host.querySelector(".fanscrim");if(sc)sc.classList.remove("on");host.querySelectorAll(".fanitem").forEach(x=>x.style.transitionDelay="0ms");host.id="";setTimeout(()=>host.remove(),260)}
 window.addEventListener("resize",()=>{if(fanOpen())closeFan(true)});
-document.addEventListener("keydown",e=>{if(e.key==="Escape"&&fanOpen()){closeFan();e.stopPropagation()}},true);document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#introOv")){closeIntro();e.stopPropagation()}},true);
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&fanOpen()){closeFan();e.stopPropagation()}},true);
+/* rows that act as buttons answer Enter and Space too */
+document.addEventListener("keydown",e=>{if((e.key==="Enter"||e.key===" ")&&e.target.matches&&e.target.matches('#app [role="button"][data-act]')){e.preventDefault();e.target.click()}});document.addEventListener("keydown",e=>{if(e.key==="Escape"&&$("#introOv")){closeIntro();e.stopPropagation()}},true);
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&(F||P||V||W||Y||N||G||E||K||Q||SF||IM||GQ||MB||RS)){stashSheets();IM=null;GQ=null;N=false;G=null;E=false;K=null;Q=null;SF=false;MB=null;RS=null;F=null;P=null;V=null;W=null;Y=null;clearSheet()}});
 S.det=new Set();document.addEventListener("toggle",e=>{const d=e.target;if(d&&d.dataset&&d.dataset.det){d.open?S.det.add(d.dataset.det):S.det.delete(d.dataset.det)}},true);
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden")stashSheets()});
