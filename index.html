@@ -253,14 +253,15 @@ function restoreBlock(){
   }
   return `<label class="btn" for="mtfile">Restore from backup</label><input type="file" id="mtfile" accept=".json,application/json" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none">`;
 }
-function card(){
+function card(part){if(part==="wipe")return wipeCard();
   const unsaved=meta.changes||0;
   return `<section class="card"><div class="head"><h2>Backup</h2><span class="small muted">Last backup ${ago(meta.lastBackup)}</span></div>
     <p class="small muted" style="margin:0 0 10px">Your data is stored only on this phone${unsaved?`, with ${unsaved} change${unsaved===1?"":"s"} since the last backup`:""}. Back up now opens your share sheet: choose <b>Save to Files → iCloud Drive</b>${NATIVE?"":" on iPhone, or <b>Drive</b> on Android"}. The app reminds you weekly, or sooner after lots of changes.</p>
     ${msg?`<p class="small" role="status" style="margin:0 0 10px;font-weight:600">${msg}</p>`:""}
     <div class="btnrow" style="position:relative"><button class="btn primary" data-act="mtbackup">Back up now</button>${restoreBlock()}</div>
     ${storageOk?"":`<p class="err" style="margin:10px 0 0">${NATIVE?"Couldn't open this phone's storage, so nothing will be kept. Close Money Tracker fully and open it again.":"This browser is blocking storage, so nothing will be kept. Open the app from your Home Screen instead."}</p>`}</section>
-  <section class="card"><div class="head"><h2>Start over</h2></div>
+`}
+function wipeCard(){return `<section class="card"><div class="head"><h2>Start over</h2></div>
     ${wipeAsk?`<div class="notice" style="background:var(--neg-soft);color:var(--neg);display:flex;flex-direction:column;gap:10px">
       <span><b>Erase everything on this phone?</b> All ${countTx(store)} transactions, your accounts, budgets and settings will be deleted. This can't be undone unless you have a backup.</span>
       <span class="btnrow"><button class="btn danger armed" data-act="mtwipeyes">Erase all data</button><button class="btn" data-act="mtwipeno">Cancel</button></span></div>`
@@ -304,7 +305,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=63;
+const BUILD=64;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -548,7 +549,7 @@ nav.tabs .add:focus:not(:focus-visible){outline:none}
 #sheetGhost .scrim{transition:background .26s ease-out}
 #sheetGhost .sheet{transition:transform .26s cubic-bezier(.4,0,1,1)}
 /* view entrance */
-#app.vin>*{animation:vin .42s cubic-bezier(.2,.8,.2,1) both;animation-delay:calc(var(--i,0)*45ms)}
+#app.vin>*{animation:vin .24s cubic-bezier(.23,1,.32,1) both;animation-delay:calc(var(--i,0)*30ms)}
 #app.vin.back>*{animation-name:vinb}
 @keyframes vin{from{opacity:0;transform:translateY(14px)}}
 @keyframes vinb{from{opacity:0;transform:translateY(-10px)}}
@@ -1813,8 +1814,9 @@ function draw(){syncRegion();
   app.innerHTML=(S.demo?`<div class="demobar" role="status"><p><b>Sample data.</b> Explore freely, nothing here is saved.</p><button class="btn sm" data-act="demoexit">Exit</button></div>`:"")+v();
   if(vkey!==S._vkey||mkey!==S._mkey){const newView=vkey!==S._vkey;S._vkey=vkey;S._mkey=mkey;
     if(!RM()){app.classList.remove("vin","anim","back");void app.offsetWidth;
-      if(newView){[...app.children].forEach((c,i)=>c.style.setProperty("--i",Math.min(i,8)));if(prevTab!==null){const st=app.querySelector(".subtabs");if(st)st.classList.add("keep")}app.classList.add("vin");if(S._back)app.classList.add("back")}
-      app.classList.add("anim");clearTimeout(S._at);S._at=setTimeout(()=>app.classList.remove("vin","anim","back"),1400);S._aT=Date.now();runCounts(app)}}
+      if(newView){[...app.children].forEach((c,i)=>c.style.setProperty("--i",Math.min(i,5)));if(prevTab!==null){const st=app.querySelector(".subtabs");if(st)st.classList.add("keep")}app.classList.add("vin");if(S._back)app.classList.add("back")}
+      /* charts grow and numbers count up the first time a screen is seen after opening the app, not on every visit */
+      const first=!SEEN.has(vkey);SEEN.add(vkey);if(first)app.classList.add("anim");clearTimeout(S._at);S._at=setTimeout(()=>app.classList.remove("vin","anim","back"),900);S._aT=Date.now();runCounts(app)}}
   else if(S._aT&&Date.now()-S._aT<500&&!RM())runCounts(app);
   else if(app.classList.contains("anim")){clearTimeout(S._at);app.classList.remove("vin","anim","back")}
   S._back=false;placePill(pillFrom);
@@ -1826,9 +1828,15 @@ function placePill(from){const st=document.querySelector("#app .subtabs");if(!st
   if(from&&from.x&&from.k!==pill.dataset.k&&!RM()){pill.style.transform=from.x;pill.style.width=from.w;void pill.offsetWidth;requestAnimationFrame(()=>{pill.style.transform=`translateX(${x}px)`;pill.style.width=w+"px"})}
   else{pill.style.transition="none";pill.style.transform=`translateX(${x}px)`;pill.style.width=w+"px";void pill.offsetWidth;pill.style.transition=""}
   pill.style.left="4px"}
-function runCounts(root){if(RM()||(root.id==="app"&&!S.tx.length))return;root.querySelectorAll("[data-cnt]").forEach(el=>{const to=+el.dataset.cnt,f=el.dataset.fmt||"m0",fin=el.textContent;if(!isFinite(to)||Math.abs(to)<1)return;
-  const fmt=v=>f==="m2"?money(v):f==="pct"?Math.round(v)+"%":money0(v),t0=performance.now(),d=Math.min(900,500+Math.log10(Math.abs(to)+1)*60);
-  const step=now=>{if(!el.isConnected)return;const k=Math.min(1,(now-t0)/d),e=1-Math.pow(1-k,3);el.textContent=k<1?fmt(to*e):fin;if(k<1)requestAnimationFrame(step)};el.textContent=fmt(0);requestAnimationFrame(step)})}
+/* screens already shown since the app opened, and the last value each big number showed */
+const SEEN=new Set(),CNT=new Map();
+function runCounts(root){if(RM()||(root.id==="app"&&!S.tx.length))return;const app=root.id==="app";
+  root.querySelectorAll("[data-cnt]").forEach(el=>{const to=+el.dataset.cnt,f=el.dataset.fmt||"m0",fin=el.textContent;if(!isFinite(to))return;let from=0;
+  /* on a screen: count up from zero the first time, then only when the number changed, from what it was */
+  if(app){const sec=el.closest(".card"),h=sec&&sec.querySelector("h2,.eyebrow"),k=S.view+"|"+(h?h.textContent:"")+"|"+(sec?[...sec.querySelectorAll("[data-cnt]")].indexOf(el):0),prev=CNT.get(k);CNT.set(k,to);if(prev!==undefined)from=prev}
+  if(Math.abs(to-from)<1)return;
+  const fmt=v=>f==="m2"?money(v):f==="pct"?Math.round(v)+"%":money0(v),t0=performance.now(),d=from?450:Math.min(700,400+Math.log10(Math.abs(to)+1)*50);
+  const step=now=>{if(!el.isConnected)return;const k=Math.min(1,(now-t0)/d),e=1-Math.pow(1-k,3);el.textContent=k<1?fmt(from+(to-from)*e):fin;if(k<1)requestAnimationFrame(step)};el.textContent=fmt(from);requestAnimationFrame(step)})}
 
 const HTITLE={work:"Pay day",safe:"Safe to spend",month:"This month",upcoming:"Coming up",prop:"Prop fees this pay",spend:"Where it went",accounts:"Your money now",ef:"Emergency fund",invest:"Investments",fire:"Financial independence",goals:"Goals",trading:"Prop trading"};
 const HSUB={safe:"Until your next payday",month:"Money in, out and left over",work:"Next pay and your year at work",upcoming:"Bills and pay due soon",prop:"Fee limit until payday",spend:"Spending ring",accounts:"Balances and cards",ef:"Progress and next steps",method:"50/30/20 or buckets",invest:"Value and cash",fire:"Progress to your number",goals:"Savings goals",trading:"Fees and payouts"};
@@ -1883,10 +1891,10 @@ function vHome(){
   let h=draftBanner()+greeting()+(window.__mt&&!S.demo?window.__mt.nudge():"")+nudges()+intNotes()+payCheckHtml()+`<button class="card hero nwhero" data-act="nw" aria-label="Net worth, see breakdown">
     <div class="eyebrow">Net worth</div><span class="nwmore">Breakdown ›</span>
     <div class="big num" data-cnt="${nw.net}" data-fmt="m2">${money(nw.net)}</div>
-    <div class="split num">
+    <div class="split num"${dl===null?' style="grid-template-columns:repeat(2,minmax(0,1fr))"':""}>
       <div><b>${money0(nw.assets)}</b><small>You own</small></div>
       <div><b>${money0(nw.debts)}</b><small>You owe</small></div>
-      <div><b>${dl===null?"–":(dl>=0?"+":"−")+money0(Math.abs(dl))}</b><small>${dl===null?"Change":"Since "+shortDate(pe)}</small></div>
+      ${dl===null?"":`<div><b>${(dl>=0?"+":"−")+money0(Math.abs(dl))}</b><small>Since ${shortDate(pe)}</small></div>`}
     </div></button>`;
   const B={},HO=[];let hk="_top";const mark=k=>{B[hk]=(B[hk]||"")+h;h="";hk=k;HO.push(k)};mark("work");h+=wkHomeCard();mark("safe");h+=safeHtml();mark("month");
   h+=`<section class="card"><div class="head"><h2>${mLong(m)}${cur?" so far":""}</h2><span class="small muted">${bad?"Shortfall":"Left over"}</span></div>
@@ -1901,7 +1909,7 @@ function vHome(){
     h+=`<section class="card"><div class="head"><h2>Coming up</h2><button class="linkbtn" data-go="calendar">Calendar</button></div><div class="rows">`;
     for(const u of up.slice(0,6)){
       const pill=u.overdue?`<span class="pill over">${shortDate(u.d)} · overdue</span>`:u.today?`<span class="pill due">Today</span>`:`<span class="pill">${dayLabel(u.d)}</span>`;
-      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money0(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
         <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
         <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip");
     }
@@ -1929,24 +1937,24 @@ function vHome(){
   mark("accounts");
   const ppl=feat("people")?people():[],owed=ppl.filter(p=>p.net>0).reduce((s,p)=>s+p.net,0),owe=ppl.filter(p=>p.net<0).reduce((s,p)=>s-p.net,0);
   const loans=feat("loans")?loanRows():[],loanOwing=loans.reduce((s,l)=>s+l.owing,0);
-  let cash=0;const cardsList=[];
+  let cash=0,nCash=0;const cardsList=[];
   h+=`<section class="card"><div class="head"><h2>Your money now</h2><button class="linkbtn" data-act="itab" data-v="accounts">All accounts</button></div><div class="rows">`;
   const shown=a=>(bal[a.name]||0)||a.opening||hasVal(a)||+a.limit||S.tx.some(t=>t.account===a.name||t.to===a.name);
   for(const a of accounts()){
     if(isInv(a)||isSuper(a))continue;
     if(a.kind==="credit"){cardsList.push(a);continue}
-    const b=bal[a.name]||0;cash+=b;if(!shown(a))continue;
+    const b=bal[a.name]||0;cash+=b;if(!shown(a))continue;nCash++;
     h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} ${bankBadge(a)}</div><div class="s">${esc(a.note||(KINDS.find(k=>k[0]===a.kind)||[,""])[1])}${a.emergency&&!/emergency/i.test(a.note||"")?" · emergency fund":""}</div></div><div class="amt num${b<0?" neg":""}">${money(b)}</div><span class="chev">›</span></button>`;
   }
   for(const k in bal){if(!accounts().some(a=>a.name===k))cash+=bal[k]}
-  h+=`<div class="row total"><div class="main">Cash across accounts</div><div class="amt num${cash<0?" neg":""}">${money(cash)}</div></div>`;
+  if(nCash>1)h+=`<div class="row total"><div class="main">Cash across accounts</div><div class="amt num${cash<0?" neg":""}">${money(cash)}</div></div>`;
   let owing=0;
   for(const a of cardsList){const ow=cardOwed(a,bal),lim=+a.limit||0;owing+=ow;
     h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} ${bankBadge(a)} <span class="cardtag">Card</span></div><div class="s">${ow>0.005?[lim?`${money0(Math.max(0,lim-ow))} available`:"Owing",+a.dueDay?`due ${shortDate(nextDue(+a.dueDay))}`:""].filter(Boolean).join(" · "):"Paid off"}</div></div><div class="amt num${ow>0.005?" neg":""}">${ow>0.005?"−":""}${money(ow)}</div><span class="chev">›</span></button>`}
   if(cardsList.length>1)h+=`<div class="row total"><div class="main">Owing on cards</div><div class="amt num">−${money(owing)}</div></div>`;
   for(const a of accounts().filter(isSuper)){const sa=superAt(a,"9999-12-31");
     h+=`<button class="row tx" data-act="acct" data-a="${esc(a.name)}"><div class="main"><div class="t">${esc(a.name)} <span class="cardtag">${SUPER()}</span></div><div class="s">${sa.emp>0?`Includes ${money0(sa.emp)} employer, estimated`:"Locked until retirement"}</div></div><div class="amt num">${money(sa.worth)}</div><span class="chev">›</span></button>`}
-  h+=`<button class="row tx" data-act="nw"><div class="main"><div class="t">Net worth</div><div class="s">Including investments${+fireCfg().super||accounts().some(isSuper)?", super":""}${owed||owe?", IOUs":""}${loanOwing?" and loans":""}</div></div><div class="amt num${nw.net<0?" neg":""}">${money(nw.net)}</div><span class="chev">›</span></button>`;
+  if(Math.abs(nw.net-cash)>=0.005||cardsList.length)h+=`<button class="row tx" data-act="nw"><div class="main"><div class="t">Net worth</div><div class="s">Including investments${+fireCfg().super||accounts().some(isSuper)?", super":""}${owed||owe?", IOUs":""}${loanOwing?" and loans":""}</div></div><div class="amt num${nw.net<0?" neg":""}">${money(nw.net)}</div><span class="chev">›</span></button>`;
   h+=`</div></section>`;
 
   mark("ef");
@@ -2033,7 +2041,7 @@ const sgn=n=>(n>0?"+":n<0?"−":"")+money(Math.abs(n));
 const dueKind=u=>u.r.type==="Income"?"in":u.r.card||u.r.type==="Transfer"?"mv":"out";
 function dueRow(u){const ro=u.r.pay?rosterFor(u.d):null;
   const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:canMove(u)?`<span class="pill">Change date</span>`:"";
-  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div>${ro?`<div class="s" style="white-space:normal">${rosterNote(ro,+u.r.amount||0)}</div>`:""}</div>
+  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money0(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div>${ro?`<div class="s" style="white-space:normal">${rosterNote(ro,+u.r.amount||0)}</div>`:""}</div>
     <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
     <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip")}
 /* hours, how far the roster reaches, and the gap to the usual pay */
@@ -2061,11 +2069,11 @@ function vCal(){
     ${ym(t)!==m?`<button class="linkbtn" data-act="calm" data-n="0">Back to this month</button>`:""}</section>`;
   if(sel){const D=c.days[sel]||{tx:[],due:[],shifts:[],rp:null,in:0,out:0,net:0,eIn:0,eOut:0},w=work();
     const has=D.tx.some(x=>x.type==="Expense"||x.type==="Income"),empty=!D.tx.length&&!D.due.length&&!D.shifts.length&&!D.rp;
-    h+=`<section class="card"><div class="head"><h2>${esc(dayLabel(sel))}</h2>${has?`<b class="num daynet ${D.net<0?"neg":"pos"}">${sgn(D.net)}</b>`:sel>=t&&(D.eIn||D.eOut)?`<b class="num daynet muted">≈ ${sgn(r2(D.eIn-D.eOut))}</b>`:""}</div>
+    h+=`<section class="card"><div class="head"><h2>${esc(dayLabel(sel))}</h2>${has?`<b class="num daynet ${D.net<0?"neg":"pos"}">${sgn(D.net)}</b>`:sel>=t&&(D.eIn||D.eOut)?`<b class="num daynet muted">≈ ${(D.eIn-D.eOut<0?"−":"+")+money0(Math.abs(D.eIn-D.eOut))}</b>`:""}</div>
       ${has&&D.in&&D.out?`<p class="small muted" style="margin:-4px 0 8px">${money(D.in)} in · ${money(D.out)} out</p>`:""}
       ${empty?`<p class="muted" style="margin:0">Nothing on this day.</p>`:""}
       ${D.shifts.length?`<div class="rows menu">${D.shifts.map(s=>{const p=shiftPay(s,w);return `<button class="row" data-go="work"><div class="main"><div class="t">Shift ${fmtT(s.start)} – ${fmtT(s.end)}</div><div class="s">${p.h} h · ${money(p.pay)} before tax</div></div><span class="chev">›</span></button>`}).join("")}</div>`:""}
-      ${D.rp?`<div class="rows menu"><button class="row" data-go="work"><div class="main"><div class="t">Pay from your roster</div><div class="s" style="white-space:normal"><span class="num">≈ ${money(D.rp.take)}</span> · ${rosterNote(D.rp,0)}</div></div><span class="chev">›</span></button></div>`:""}
+      ${D.rp?`<div class="rows menu"><button class="row" data-go="work"><div class="main"><div class="t">Pay from your roster</div><div class="s" style="white-space:normal"><span class="num">≈ ${money0(D.rp.take)}</span> · ${rosterNote(D.rp,0)}</div></div><span class="chev">›</span></button></div>`:""}
       ${D.due.length?`<div class="rows">${D.due.map(dueRow).join("")}</div>`:""}${D.tx.length?`<div class="rows">${D.tx.map(txRow).join("")}</div>`:""}</section>`}
   return h}
 /* ---------- trips: a name, dates and a budget; expenses in those dates can be tagged to it ---------- */
@@ -2908,7 +2916,7 @@ function vMore(){
   ${window.__mt&&!S.demo?`${window.__mt.card()}<section class="card"><div class="head"><h2>Export</h2></div><p class="small muted" style="margin:0 0 10px">Save every transaction as a CSV file that opens in Excel or Numbers.</p><button class="btn" data-act="export">Download CSV</button></section>`:`<section class="card"><div class="head"><h2>Backup and export</h2></div><p class="small muted" style="margin:0 0 10px">A backup holds everything: accounts, budgets, bills, goals and every transaction. Keep one somewhere safe, and you can put your tracker back exactly as it was.${S.cfg&&S.cfg.lastBackup?` Last backup ${shortDate(S.cfg.lastBackup)} ${S.cfg.lastBackup.slice(0,4)}.`:""}</p>
   ${S.dl?`<div class="btnrow"><button class="btn primary" data-act="backup">Download backup</button><button class="btn" data-act="rspick">Restore a backup</button><input type="file" id="rsfile" accept=".json,application/json" hidden></div>
   <p class="small muted" style="margin:12px 0 8px">Or download every transaction as a CSV file that opens in Excel.</p><button class="btn" data-act="export">Download CSV</button>`:`<p class="small muted" style="margin:0 0 10px">Downloads aren't available in this view.</p><button class="btn" data-act="rspick">Restore a backup</button><input type="file" id="rsfile" accept=".json,application/json" hidden>`}</section>
-  `}<section class="card"><div class="head"><h2>The test</h2></div><p class="small" style="margin:0">Coming back? It's an IOU. Between your own accounts? A transfer. Otherwise it's income or an expense.</p></section>`;
+  `}<section class="card"><div class="head"><h2>The test</h2></div><p class="small" style="margin:0">Coming back? It's an IOU. Between your own accounts? A transfer. Otherwise it's income or an expense.</p></section>${window.__mt&&!S.demo?window.__mt.card("wipe"):""}`;
 }
 
 /* ---------- net worth ---------- */
