@@ -304,7 +304,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=62;
+const BUILD=63;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -945,6 +945,11 @@ details.more[open] summary{margin-bottom:10px}
 .calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px;margin:12px 0 8px}
 .calw{text-align:center;font-size:11px;font-weight:700;color:var(--muted);padding:2px 0}
 .calc{display:flex;flex-direction:column;align-items:center;gap:1px;min-height:54px;padding:4px 1px;border:0;border-radius:9px;background:var(--sunk);color:var(--ink);font:inherit;overflow:hidden}
+.calc{transition:transform 120ms cubic-bezier(.23,1,.32,1)}.calc:not(.pad):active{transform:scale(.95);opacity:1}
+.calc .num.zero{color:var(--muted)}.calc .num.exp{opacity:.62;font-style:italic}
+.calsum{grid-template-columns:repeat(3,minmax(0,1fr));margin:4px 0 6px}.calsum .pos{color:var(--pos)}.calsum .neg{color:var(--neg)}
+.daynet{font-size:17px;font-variant-numeric:tabular-nums}.daynet.pos{color:var(--pos)}.daynet.neg{color:var(--neg)}
+.calc .dots i.sh,.callegend i.sh{width:10px;height:3px;border-radius:2px;background:var(--ink);opacity:.55;align-self:center}.calc.sel .num.exp{opacity:.85}
 .calc.pad{background:none}.calc b{font-size:13px}.calc .num{font-size:10px;line-height:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .calc .out{color:var(--neg)}.calc .in{color:var(--pos)}
 .calc.today{box-shadow:inset 0 0 0 2px var(--accent)}.calc.sel{background:var(--accent);color:var(--accent-ink)}.calc.sel .out,.calc.sel .in{color:inherit}
@@ -1896,7 +1901,7 @@ function vHome(){
     h+=`<section class="card"><div class="head"><h2>Coming up</h2><button class="linkbtn" data-go="calendar">Calendar</button></div><div class="rows">`;
     for(const u of up.slice(0,6)){
       const pill=u.overdue?`<span class="pill over">${shortDate(u.d)} · overdue</span>`:u.today?`<span class="pill due">Today</span>`:`<span class="pill">${dayLabel(u.d)}</span>`;
-      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+      h+=swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
         <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
         <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip");
     }
@@ -2003,37 +2008,64 @@ function txRow(t){
 
 /* ---------- calendar: what came in and went out each day, and what's expected ---------- */
 /* {days:{date:{out,in,tx,due}},out,in,due} for month m; expected items only from today on (plus this month's overdue ones) */
+/* net is money in minus money out (transfers and IOUs don't count). eIn/eOut are what's still expected: bills, and pay
+   at the roster's take-home when shifts are logged for that period, otherwise the usual amount. */
 function calMonth(m){return memo("cal",m,()=>{
-  const t=today(),start=m+"-01",end=dayIn(m,31),days={};let out=0,inn=0,due=0;
-  const day=d=>days[d]||(days[d]={out:0,in:0,tx:[],due:[]});
+  const t=today(),start=m+"-01",end=dayIn(m,31),days={};let out=0,inn=0,due=0,eIn=0,eOut=0,rost=0,usual=0;
+  const day=d=>days[d]||(days[d]={out:0,in:0,net:0,eIn:0,eOut:0,tx:[],due:[],shifts:[],rp:null});
   for(const x of S.tx){if(ym(x.date)!==m)continue;const D=day(x.date),a=+x.amount||0;D.tx.push(x);
     if(x.type==="Expense"){D.out+=a;out+=a}else if(x.type==="Income"){D.in+=a;inn+=a}}
-  if(end>=t)for(const u of upcomingIn(start,end)){day(u.d).due.push(u);if(u.r.type==="Expense"||u.r.card)due+=+u.r.amount||0}
-  for(const d in days){const D=days[d];D.out=r2(D.out);D.in=r2(D.in);D.tx.sort((a,b)=>(b.created||0)-(a.created||0))}
-  return{days,out:r2(out),in:r2(inn),due:r2(due)}})}
+  const used=[],payDue=[];
+  if(end>=t)for(const u of upcomingIn(start,end)){const D=day(u.d);D.due.push(u);if(u.r.type==="Expense"||u.r.card)due+=+u.r.amount||0;
+    if(u.r.type==="Expense"){D.eOut+=+u.r.amount||0;eOut+=+u.r.amount||0}
+    else if(u.r.type==="Income"){const ro=u.r.pay?rosterFor(u.d):null,a=ro?ro.take:+u.r.amount||0;D.eIn+=a;eIn+=a;
+      if(u.r.pay)payDue.push(u.d);if(ro){rost+=ro.take;usual+=+u.r.amount||0;used.push(ro.pay)}}}
+  /* pay days from the roster that no usual pay lines up with; and the shifts, shown on their days */
+  const w=work();
+  if(end>=t&&wkRate(w,"ord")>0)for(const q of rosterPays(start>t?start:t,end))if(!used.includes(q.pay)&&!payDue.some(d=>Math.abs(dBetween(d,q.pay))<=4)){const D=day(q.pay);D.rp=q;D.eIn+=q.take;eIn+=q.take;rost+=q.take}
+  for(const s of w.shifts)if(!s.off&&ym(s.date)===m)day(s.date).shifts.push(s);
+  for(const d in days){const D=days[d];D.out=r2(D.out);D.in=r2(D.in);D.net=r2(D.in-D.out);D.eIn=r2(D.eIn);D.eOut=r2(D.eOut);D.tx.sort((a,b)=>(b.created||0)-(a.created||0));D.shifts.sort((a,b)=>(a.start||"").localeCompare(b.start||""))}
+  return{days,out:r2(out),in:r2(inn),net:r2(inn-out),due:r2(due),eIn:r2(eIn),eOut:r2(eOut),eNet:r2(eIn-eOut),rost:r2(rost),usual:r2(usual)}})}
 let FMTK=null;
 const calAmt=n=>{if(!FMTK||FMTK.cur!==CUR){FMTK=new Intl.NumberFormat("en-AU",{style:"currency",currency:CUR,notation:"compact",maximumFractionDigits:1});FMTK.cur=CUR}return FMTK.format(Math.round(n))};
+const calNet=n=>(n>0?"+":n<0?"−":"")+calAmt(Math.abs(n));
+const sgn=n=>(n>0?"+":n<0?"−":"")+money(Math.abs(n));
 const dueKind=u=>u.r.type==="Income"?"in":u.r.card||u.r.type==="Transfer"?"mv":"out";
-function dueRow(u){
+function dueRow(u){const ro=u.r.pay?rosterFor(u.d):null;
   const pill=u.overdue?`<span class="pill over">overdue</span>`:u.today?`<span class="pill due">Today</span>`:canMove(u)?`<span class="pill">Change date</span>`:"";
-  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div></div>
+  return swipeWrap("skip:"+u.key,`<div class="row"><div class="main"><div class="t">${esc(u.r.desc)}</div><div class="s">${movePill(u,pill)} <span class="num">${u.r.card?esc(money0(u.r.amount)+" owed"):u.r.type==="Transfer"?esc(money0(u.r.amount)+" → "+(u.r.to||"?")):u.r.pay&&rosterFor(u.d)?"≈ "+money(rosterFor(u.d).take)+" from your roster":u.r.amount?(u.r.bnplId?"":"≈ ")+money(u.r.amount)+(u.r.auto?" · added for you":""):u.r.interest?"Amount varies":""}</span></div>${ro?`<div class="s" style="white-space:normal">${rosterNote(ro,+u.r.amount||0)}</div>`:""}</div>
     <button class="btn sm primary" data-act="logrec" data-key="${esc(u.key)}">Log</button>
     <button class="btn sm" data-act="skiprec" data-key="${esc(u.key)}" aria-label="Skip this one">Skip</button></div>`,"skip")}
+/* hours, how far the roster reaches, and the gap to the usual pay */
+function rosterNote(ro,usual){const diff=r2(ro.take-usual),au=AU();
+  return `${ro.hrs} h rostered${au?` · ${money0(ro.gross)} before tax`:""}${usual&&Math.abs(diff)>=1?` · ${diff>0?money0(diff)+" more":money0(-diff)+" less"} than your usual ${money0(usual)}`:""}${ro.partial?` · shifts only logged to ${esc(shortDate(ro.partial))}`:""}`}
 function vCal(){
   const t=today(),m=S.calMonth||ym(t),c=calMonth(m),last=+dayIn(m,31).slice(8);
   const lead=(new Date(m+"-01T00:00:00Z").getUTCDay()+6)%7;/* weeks start on Monday */
   const sel=S.calDay&&ym(S.calDay)===m?S.calDay:(ym(t)===m?t:"");
   let cells="";for(let i=0;i<lead;i++)cells+=`<span class="calc pad" aria-hidden="true"></span>`;
-  for(let n=1;n<=last;n++){const d=m+"-"+pad(n),D=c.days[d],kinds=D?[...new Set(D.due.map(dueKind))]:[];
-    const label=[shortDate(d),D&&D.out?`spent ${money(D.out)}`:"",D&&D.in?`earned ${money(D.in)}`:"",D&&D.due.length?`${D.due.length} expected`:""].filter(Boolean).join(", ");
-    cells+=`<button class="calc${d===t?" today":""}${d===sel?" sel":""}" data-act="calday" data-d="${d}" aria-label="${esc(label)}" aria-pressed="${d===sel}"><b>${n}</b>${D&&D.out?`<span class="num out">${calAmt(D.out)}</span>`:""}${D&&D.in?`<span class="num in">${calAmt(D.in)}</span>`:""}${kinds.length?`<span class="dots">${kinds.map(k=>`<i class="${k}"></i>`).join("")}</span>`:""}</button>`}
+  for(let n=1;n<=last;n++){const d=m+"-"+pad(n),D=c.days[d],kinds=D?[...new Set(D.due.map(dueKind).concat(D.rp?["in"]:[]))]:[];
+    /* the day's net: what happened, or for days ahead with nothing logged, what's expected (marked ≈ and lighter) */
+    const has=!!(D&&D.tx.some(x=>x.type==="Expense"||x.type==="Income")),ahead=!!(D&&!has&&d>=t&&(D.eIn||D.eOut)),net=D?(ahead?r2(D.eIn-D.eOut):D.net):0;
+    const label=[shortDate(d),has?`net ${sgn(D.net)}`:"",has&&D.out?`spent ${money(D.out)}`:"",has&&D.in?`earned ${money(D.in)}`:"",ahead?`expected net ${sgn(net)}`:"",D&&D.shifts.length?`${D.shifts.length} shift${D.shifts.length===1?"":"s"}`:"",D&&D.due.length?`${D.due.length} expected`:""].filter(Boolean).join(", ");
+    cells+=`<button class="calc${d===t?" today":""}${d===sel?" sel":""}" data-act="calday" data-d="${d}" aria-label="${esc(label)}" aria-pressed="${d===sel}"><b>${n}</b>${has||ahead?`<span class="num ${net>0?"in":net<0?"out":"zero"}${ahead?" exp":""}">${ahead?"≈":""}${calNet(net)}</span>`:""}${kinds.length||(D&&D.shifts.length)?`<span class="dots">${kinds.map(k=>`<i class="${k}"></i>`).join("")}${D&&D.shifts.length?`<i class="sh"></i>`:""}</span>`:""}</button>`}
+  const future=m>ym(t),cur=m===ym(t),stat=(l,v,cls)=>`<div class="stat"><small>${l}</small><b class="${cls||""}">${v}</b></div>`,whole=n=>(n<0?"−":n>0?"+":"")+money0(Math.abs(n));
   let h=`<section class="card"><div class="calnav"><button class="btn sm" data-act="calm" data-n="-1" aria-label="Previous month">‹</button><h2>${mLabel(m)}</h2><button class="btn sm" data-act="calm" data-n="1" aria-label="Next month">›</button></div>
-    ${m>ym(t)?"":`<div class="kv"><span>Spent</span><b class="num">${money(c.out)}</b></div><div class="kv"><span>Earned</span><b class="num">${money(c.in)}</b></div>`}${c.due?`<div class="kv"><span>Bills still due</span><b class="num">${money(c.due)}</b></div>`:""}
+    ${future?`<div class="stats num calsum">${stat("Expected in",money0(c.eIn),"pos")}${stat("Expected out",money0(c.eOut))}${stat("Net","≈ "+whole(c.eNet),c.eNet<0?"neg":"pos")}</div>`
+      :`<div class="stats num calsum">${stat(cur?"In so far":"Money in",money0(c.in),"pos")}${stat(cur?"Out so far":"Money out",money0(c.out))}${stat("Net",whole(c.net),c.net<0?"neg":"pos")}</div>`}
+    ${cur&&(c.eIn||c.eOut)?`<div class="kv"><span>Still expected this month</span><b class="num">+${money0(c.eIn)} · −${money0(c.eOut)}</b></div><div class="kv"><span>Net by the end of the month</span><b class="num${c.net+c.eNet<0?" neg":""}">≈ ${whole(r2(c.net+c.eNet))}</b></div>`:""}
+    ${c.rost?`<div class="kv"><span>Pay from your roster${c.usual?` <span class="small muted">· usual ${money0(c.usual)}</span>`:""}</span><b class="num">≈ ${money0(c.rost)}</b></div>`:""}
+    ${c.due&&!future?`<div class="kv"><span>Bills still due</span><b class="num">${money(c.due)}</b></div>`:""}
     <div class="calgrid" role="group" aria-label="${mLabel(m)}">${["M","T","W","T","F","S","S"].map(x=>`<span class="calw" aria-hidden="true">${x}</span>`).join("")}${cells}</div>
-    <p class="small muted callegend"><span><i class="out"></i>bill</span><span><i class="in"></i>pay</span><span><i class="mv"></i>card or transfer</span></p>
+    <p class="small muted callegend"><span><i class="out"></i>bill</span><span><i class="in"></i>pay</span><span><i class="mv"></i>card or transfer</span>${wkRate(work(),"ord")>0?`<span><i class="sh"></i>shift</span>`:""}<span>≈ expected</span></p>
     ${ym(t)!==m?`<button class="linkbtn" data-act="calm" data-n="0">Back to this month</button>`:""}</section>`;
-  if(sel){const D=c.days[sel]||{tx:[],due:[]};
-    h+=`<section class="card"><div class="head"><h2>${esc(dayLabel(sel))}</h2></div>${!D.tx.length&&!D.due.length?`<p class="muted" style="margin:0">Nothing on this day.</p>`:""}
+  if(sel){const D=c.days[sel]||{tx:[],due:[],shifts:[],rp:null,in:0,out:0,net:0,eIn:0,eOut:0},w=work();
+    const has=D.tx.some(x=>x.type==="Expense"||x.type==="Income"),empty=!D.tx.length&&!D.due.length&&!D.shifts.length&&!D.rp;
+    h+=`<section class="card"><div class="head"><h2>${esc(dayLabel(sel))}</h2>${has?`<b class="num daynet ${D.net<0?"neg":"pos"}">${sgn(D.net)}</b>`:sel>=t&&(D.eIn||D.eOut)?`<b class="num daynet muted">≈ ${sgn(r2(D.eIn-D.eOut))}</b>`:""}</div>
+      ${has&&D.in&&D.out?`<p class="small muted" style="margin:-4px 0 8px">${money(D.in)} in · ${money(D.out)} out</p>`:""}
+      ${empty?`<p class="muted" style="margin:0">Nothing on this day.</p>`:""}
+      ${D.shifts.length?`<div class="rows menu">${D.shifts.map(s=>{const p=shiftPay(s,w);return `<button class="row" data-go="work"><div class="main"><div class="t">Shift ${fmtT(s.start)} – ${fmtT(s.end)}</div><div class="s">${p.h} h · ${money(p.pay)} before tax</div></div><span class="chev">›</span></button>`}).join("")}</div>`:""}
+      ${D.rp?`<div class="rows menu"><button class="row" data-go="work"><div class="main"><div class="t">Pay from your roster</div><div class="s" style="white-space:normal"><span class="num">≈ ${money(D.rp.take)}</span> · ${rosterNote(D.rp,0)}</div></div><span class="chev">›</span></button></div>`:""}
       ${D.due.length?`<div class="rows">${D.due.map(dueRow).join("")}</div>`:""}${D.tx.length?`<div class="rows">${D.tx.map(txRow).join("")}</div>`:""}</section>`}
   return h}
 /* ---------- trips: a name, dates and a budget; expenses in those dates can be tagged to it ---------- */
@@ -2152,7 +2184,19 @@ function wkSched(w){w=w||work();const p=w.pay||{};
   if(ISO.test(p.anchor||""))return{len:+p.len===7?7:14,anchor:p.anchor,lag:Math.max(0,+p.lag||0),src:"set"};
   const sl=w.slips.filter(s=>s.from&&s.to).sort((a,b)=>b.to.localeCompare(a.to))[0];
   if(sl){const n=daysIncl(sl.from,sl.to);return{len:n<=10?7:14,anchor:sl.from,lag:Math.max(0,dBetween(sl.to,sl.payDate)),src:"slip"}}
+  /* no pay settings or payslip: line the periods up with the usual pay day (Bills and pay), each ending 3 days before it */
+  const pi=S.cfg&&(S.cfg.recurring||[]).find(r=>r.pay);
+  if(pi&&ISO.test(pi.anchor||"")&&(pi.cadence==="week"||pi.cadence==="fortnight")){const len=pi.cadence==="week"?7:14;return{len,anchor:addDays(pi.anchor,-2-len),lag:3,src:"payitem"}}
   return{len:14,anchor:monOf(today()),lag:3,src:"assumed"}}
+/* pay from rostered shifts only (no averages), for each pay period whose pay day is from..to: gross from the shifts,
+   tax by the withholding formula, and how far the roster reaches into the period. Periods with no shifts are left out. */
+function rosterPays(from,to){const w=work();if(!(wkRate(w,"ord")>0))return[];const sc=wkSched(w),au=AU(),on=w.shifts.filter(s=>!s.off);
+  const last=on.reduce((m,s)=>s.date>m?s.date:m,"");
+  return wkPeriods(sc,from,to).map(q=>{let g=0,m=0,n=0;for(const s of on)if(s.date>=q.from&&s.date<=q.to){const x=shiftPay(s,w);g+=x.pay;m+=x.mins;n++}
+    g=r2(g);const tax=au?r2(withhold(g,sc.len)):0;
+    return Object.assign({},q,{gross:g,tax,take:r2(g-tax),hrs:r2(m/60),n,partial:last<q.to?last:""})}).filter(q=>q.n>0)}
+/* the roster pay period paid nearest to a pay day (within 4 days), or null */
+function rosterFor(d){return memo("ro",d,()=>{let best=null;for(const q of rosterPays(addDays(d,-4),addDays(d,4)))if(!best||Math.abs(dBetween(d,q.pay))<Math.abs(dBetween(d,best.pay)))best=q;return best})}
 /* every pay period whose pay day falls between two dates */
 function wkPeriods(sc,from,to){const out=[];let k=Math.floor((dBetween(sc.anchor,from)-sc.lag-sc.len)/sc.len)-1;
   for(;;k++){const a=addDays(sc.anchor,k*sc.len),b=addDays(a,sc.len-1),pay=addDays(b,sc.lag);if(pay>to)break;if(pay>=from)out.push({from:a,to:b,pay})}return out}
@@ -2263,7 +2307,7 @@ function wkPayCard(w,t,au){const form=WK&&WK.f==="slip"?wkSlipForm():"",Y=wkYear
     const sub=`${span(r)}<br>${money(r.gross)} before tax${au?` · ${money(r.tax)} tax`:""} · ${money(net)} take-home${Math.abs(diff)>=0.01?`<br>${diff>0?money(diff)+" more":money(-diff)+" less"} than your shifts`:""}`;
     return `<button class="row" ${r.slip?`data-act="wkslipedit" data-id="${esc(r.slip)}"`:`data-act="wkslipfor" data-f="${r.from}" data-t="${r.to}" data-p="${r.pay}"`}><div class="main"><div class="t">${day(r.pay)}</div><div class="s" style="white-space:normal">${sub}</div></div>${pill}<span class="chev">›</span></button>`};
   h+=rows.length?`<details class="more"${n?"":" open"}><summary>Pay day log ›</summary><div class="rows menu">${rows.map(row).join("")}</div>
-    <p class="small muted" style="margin:8px 0 0">${sc.len===7?"Weekly":"Fortnightly"} pay, ${sc.lag} day${sc.lag===1?"":"s"} after each period ends${sc.src==="slip"?", read from your latest payslip":sc.src==="assumed"?" (assumed: set your pay cycle in pay settings)":""}. Tap a pay day to add or fix its payslip. Pay is logged as income when it lands in your account, so it isn't counted twice.</p></details>`
+    <p class="small muted" style="margin:8px 0 0">${sc.len===7?"Weekly":"Fortnightly"} pay, ${sc.lag} day${sc.lag===1?"":"s"} after each period ends${sc.src==="slip"?", read from your latest payslip":sc.src==="payitem"?", lined up with your usual pay day":sc.src==="assumed"?" (assumed: set your pay cycle in pay settings)":""}. Tap a pay day to add or fix its payslip. Pay is logged as income when it lands in your account, so it isn't counted twice.</p></details>`
     :`<p class="small muted" style="margin:8px 0 0">Add the gross pay and tax from each payslip to make the yearly figure and the tax estimate exact.</p>`;
   return h+`</section>`}
 function wkDisclaimer(au){return `<section class="card"><div class="head"><h2>About these numbers</h2></div>
@@ -4745,7 +4789,7 @@ document.addEventListener("click",async e=>{
       if(!F.armed){readForm();F.armed=true;drawSheet();return}
       try{const t0=S.tx.find(x=>x.id===F.id);await S.db.doc("tx/"+F.id).delete();await skipAutoInterest(t0).catch(()=>false);toast("Deleted");F=null;drawSheet()}catch(err){F.err=dbMsg(err);F.armed=false;drawSheet()}break;
     case "edit":{const t=S.tx.find(x=>x.id===a.dataset.id);if(t)openTx({...t,amount:String(Math.abs(+t.amount||0)),neg:(+t.amount||0)<0,person:t.person||"",to:t.to||"",touched:{},step:3,ready:true});break}
-    case "logrec":{const u=dueByKey(a.dataset.key);if(u&&u.r.bnplId){openTx({type:"Expense",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:String(u.r.amount),date:u.d<=today()?u.d:today(),due:u.d,rec:u.key,ready:true,hintAmt:String(u.r.amount),step:3,touched:{type:1,category:1,account:1}});break}if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u)openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:u.r.amount?String(u.r.amount):"",touched:{type:1,category:1,account:1,to:1}});break}
+    case "logrec":{const u=dueByKey(a.dataset.key);if(u&&u.r.bnplId){openTx({type:"Expense",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:String(u.r.amount),date:u.d<=today()?u.d:today(),due:u.d,rec:u.key,ready:true,hintAmt:String(u.r.amount),step:3,touched:{type:1,category:1,account:1}});break}if(u&&u.r.loanId){const l=(S.cfg.loans||[]).find(x=>x.id===u.r.loanId);if(l)openTx(loanTx(l,{rec:u.key,date:u.d<=today()?u.d:today(),due:u.d}));break}if(u&&u.r.interest){openTx({type:"Income",desc:u.r.desc,category:u.r.category,account:u.r.account,amount:u.r.amount?String(u.r.amount):"",date:u.d<=today()?u.d:today(),rec:u.key,ready:true,hintAmt:"",step:u.r.amount?3:1,touched:{type:1,category:1,account:1}});break}if(u){const ro=u.r.pay?rosterFor(u.d):null,hint=ro?ro.take:u.r.amount;openTx({type:u.r.type,desc:u.r.desc,category:u.r.type==="Transfer"?"":u.r.category,account:u.r.account,to:u.r.type==="Transfer"?(u.r.to||""):"",amount:u.r.type==="Transfer"&&u.r.amount?String(u.r.amount):"",date:today(),due:u.d,rec:u.key,ready:true,hintAmt:hint?String(hint):"",touched:{type:1,category:1,account:1,to:1}})}break}
     case "skiprec":{const u=dueByKey(a.dataset.key);if(!u)return;try{await setSkip(u,true);toastUndo(`Skipped ${u.r.desc}`,()=>setSkip(u,false))}catch(err){toast(dbMsg(err))}break}
     case "actm":S.actMonth=a.dataset.m;S.actLim=0;render();break;
     case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
