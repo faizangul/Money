@@ -146,3 +146,20 @@ test("a job's pay rise and a finish date are checked before saving", () => {
   assert.match(jobErr({ ...base, left: true, end: "2029-12-01", rates: [{ ord: 30 }] }), /after you started/);
   assert.match(jobErr({ ...base, kind: "salary", rates: [{}], salary: [{ annual: "" }] }), /yearly salary/);
 });
+
+test("after a job change, the usual pay lines up with the new job's roster, not counted twice", () => {
+  const today = get("today")(), ym = get("ym"), shiftMonth = get("shiftMonth"), nextMonth = shiftMonth(ym(today), 1), PAY = nextMonth + "-15";
+  const anchor = addDays(PAY, -3 - 14); // the new job's period ends 3 days before the usual pay day
+  S.cfg = { currency: "AUD", region: "au", accounts: [{ name: "Everyday", kind: "everyday", opening: 1000 }], categories: [],
+    recurring: [{ id: "p1", desc: "Pay", type: "Income", category: "Salary", account: "Everyday", amount: 1500, cadence: "fortnight", anchor: PAY, skipped: [], pay: true }],
+    work: { jobs: [hourly("j1", 30, { end: addDays(today, -40) }), hourly("j2", 40, { start: addDays(today, -39), tft: false, pay: { len: 14, lag: 3, anchor } })],
+      shifts: [sh("a", addDays(PAY, -10), "j2"), sh("b", addDays(PAY, -9), "j2")], slips: [] } };
+  S.tx = [{ id: "seed", date: addDays(today, -60), type: "Expense", amount: 1, account: "Everyday", category: "Food", desc: "x" }];
+  S.props = [];
+  const ro = plain(get("rosterFor")(PAY));
+  assert.equal(ro.job, "j2");
+  assert.equal(ro.gross, 320);
+  const c = plain(get("calMonth")(nextMonth)), D = c.days[PAY];
+  assert.equal(D.rps.length, 0, "no separate entry for the new job on the usual pay day");
+  assert.equal(D.eIn, ro.take, "the roster's take-home replaces the usual amount");
+});

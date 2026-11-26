@@ -2030,8 +2030,8 @@ function calMonth(m){return memo("cal",m,()=>{
       if(u.r.pay)payDue.push(u.d);if(ro){rost+=ro.take;usual+=+u.r.amount||0;used.push(ro.pay)}}}
   /* pay days from the roster that no usual pay lines up with; and the shifts, shown on their days */
   const w=work();
-  /* only the first job's pay lines up with the usual pay; other jobs' pay days always show on their own */
-  if(end>=t&&wkHourly(w).length)for(const q of rosterPays(start>t?start:t,end))if(q.job!==w.jobs[0].id||(!used.includes(q.pay)&&!payDue.some(d=>Math.abs(dBetween(d,q.pay))<=4))){const D=day(q.pay);D.rp=D.rp||q;D.rps.push(q);D.eIn+=q.take;eIn+=q.take;rost+=q.take}
+  /* only the job the usual pay stands for lines up with it; other jobs' pay days always show on their own */
+  if(end>=t&&wkHourly(w).length)for(const q of rosterPays(start>t?start:t,end))if(q.job!==payJob(w,q.pay).id||(!used.includes(q.pay)&&!payDue.some(d=>Math.abs(dBetween(d,q.pay))<=4))){const D=day(q.pay);D.rp=D.rp||q;D.rps.push(q);D.eIn+=q.take;eIn+=q.take;rost+=q.take}
   for(const s of w.shifts)if(!s.off&&ym(s.date)===m)day(s.date).shifts.push(s);
   for(const d in days){const D=days[d];D.out=r2(D.out);D.in=r2(D.in);D.net=r2(D.in-D.out);D.eIn=r2(D.eIn);D.eOut=r2(D.eOut);D.tx.sort((a,b)=>(b.created||0)-(a.created||0));D.shifts.sort((a,b)=>(a.start||"").localeCompare(b.start||""))}
   return{days,out:r2(out),in:r2(inn),net:r2(inn-out),due:r2(due),eIn:r2(eIn),eOut:r2(eOut),eNet:r2(eIn-eOut),rost:r2(rost),usual:r2(usual)}})}
@@ -2219,7 +2219,7 @@ function wkSched(w,j){w=w||work();j=j||w.jobs[0];const p=j.pay||{};
   const sl=w.slips.filter(s=>s.from&&s.to&&ofJob(s,j,w)).sort((a,b)=>b.to.localeCompare(a.to))[0];
   if(sl){const n=daysIncl(sl.from,sl.to);return{len:n<=10?7:n<=20?14:"m",anchor:sl.from,lag:Math.max(0,dBetween(sl.to,sl.payDate)),src:"slip"}}
   /* no pay settings or payslip: line the periods up with the usual pay day (Bills and pay), each ending 3 days before it */
-  const pi=j===w.jobs[0]&&S.cfg&&(S.cfg.recurring||[]).find(r=>r.pay);
+  const pi=j===payJob(w,today())&&S.cfg&&(S.cfg.recurring||[]).find(r=>r.pay);
   if(pi&&ISO.test(pi.anchor||"")&&(pi.cadence==="week"||pi.cadence==="fortnight")){const len=pi.cadence==="week"?7:14;return{len,anchor:addDays(pi.anchor,-2-len),lag:3,src:"payitem"}}
   return{len:14,anchor:monOf(j.start||today()),lag:3,src:"assumed"}}
 /* every pay period whose pay day falls between two dates */
@@ -2238,8 +2238,11 @@ function rosterPays(from,to,jid){const w=work(),au=AU(),out=[];
       if(!n)continue;g=r2(g);const tax=au?withhold(g,wdays(sc.len),j.tft):0;
       out.push(Object.assign({},q,{job:j.id,gross:g,tax,take:r2(g-tax),hrs:r2(m/60),n,partial:last<q.to?last:""}))}}
   return out.sort((a,b)=>a.pay.localeCompare(b.pay))}
-/* the first job's roster pay period paid nearest to a pay day (within 4 days), or null: it lines up with the usual pay */
-function rosterFor(d){return memo("ro",d,()=>{const w=work();let best=null;for(const q of rosterPays(addDays(d,-4),addDays(d,4),w.jobs[0].id))if(!best||Math.abs(dBetween(d,q.pay))<Math.abs(dBetween(d,best.pay)))best=q;return best})}
+/* the job the usual pay (Bills and pay) stands for on a date: the first hourly job still on that day, so after a job
+   change the usual pay follows the new job */
+function payJob(w,d){return wkHourly(w).find(j=>jobOn(j,d))||w.jobs[0]}
+/* that job's roster pay period paid nearest to a pay day (within 4 days), or null: it lines up with the usual pay */
+function rosterFor(d){return memo("ro",d,()=>{const w=work();let best=null;for(const q of rosterPays(addDays(d,-4),addDays(d,4),payJob(w,d).id))if(!best||Math.abs(dBetween(d,q.pay))<Math.abs(dBetween(d,best.pay)))best=q;return best})}
 /* a salary's pay for the days of a period, split into days up to t and after: each day the job was on earns its share of
    a full period's pay at that day's salary (a year over 52 weeks, or 12 months) */
 function salaryIn(j,sc,q,t){let done=0,ahead=0;const n=daysIncl(q.from,q.to);
