@@ -305,7 +305,7 @@ window.claude={use:async n=>n==="db"?(await secretsReady,await ready?db:null):n=
 if("serviceWorker" in navigator&&location.protocol==="https:"){
 /* Tells people when a newer version is ready. BUILD must match the number in CACHE in sw.js (a test checks it).
    The page never reloads by itself, because someone could be halfway through an entry. */
-const BUILD=65;
+const BUILD=66;
 const offerUpdate=async()=>{
   if(document.getElementById("updbar"))return;
   let v=0;
@@ -939,6 +939,7 @@ body.pinon{overflow:hidden}body.pinon #app,body.pinon nav.tabs,body.pinon #sheet
 details.more{border-top:1px dashed var(--line);padding-top:8px}
 details.more summary{cursor:pointer;font-size:14px;font-weight:600;color:var(--accent);list-style:none}
 details.more summary::-webkit-details-marker{display:none}
+.rows>.wkinline{border-top:1px solid var(--line);padding:10px 0 0}
 details.more[open] summary{margin-bottom:10px}
 .bbadge{display:inline-block;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;font-size:11px;font-weight:700;line-height:16px;padding:1px 7px;border-radius:6px;background:var(--bb,var(--sunk));color:var(--bf,var(--muted));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 12%,transparent)}
 .acchero .bbadge{margin-bottom:8px}
@@ -2328,21 +2329,32 @@ function wkVisaCard(w,t){const v=visaFor(t,w),cap=+w.visa.cap||48,next=w.study.f
     <div class="tripbar" role="img" aria-label="${pc}% of the limit"><i style="width:${pc}%"${over?' class="over"':""}></i></div>
     <p class="small muted" style="margin:8px 0 0">${over?`<b>Over the limit by ${r2(v.h-cap)} h.</b> Change a rostered shift if you can.`:`${r2(cap-v.h)} h left in this fortnight, rostered shifts included.`} Any 14 days starting on a Monday counts, so this shows the busier of the two fortnights you're in. Count hours at every job.</p>`}
   return h+`</section>`}
-function wkShiftsCard(w,t){const form=WK&&WK.f==="shift"?wkShiftForm(w):"";
-  const shifts=w.shifts.slice().sort((a,b)=>b.date.localeCompare(a.date)||String(b.start).localeCompare(String(a.start)));
-  /* 8 weeks back (not before the first shift logged) and any rostered weeks ahead; weeks off in a row share one line */
-  const first=shifts.length?monOf(shifts[shifts.length-1].date):monOf(t),top=shifts.length&&shifts[0].date>t?monOf(shifts[0].date):monOf(t),stop=first>addDays(monOf(t),-49)?first:addDays(monOf(t),-49);
+/* shifts, split so the busy part stays short: this week and next week open, later rostered weeks and
+   past weeks folded away. Editing a shift opens its form in place of its row, so there's no scrolling back up. */
+function wkShiftsCard(w,t){const ed=WK&&WK.f==="shift"?WK:null,form=ed&&!ed.id?wkShiftForm(w):"";
+  const shifts=w.shifts.slice().sort((a,b)=>a.date.localeCompare(b.date)||String(a.start).localeCompare(String(b.start)));
+  const m0=monOf(t),m1=addDays(m0,7),m2=addDays(m0,14),stop=addDays(m0,-56),editing=x=>!!(ed&&ed.id&&x.some(s=>s.id===ed.id));
   const head=(l,r)=>`<div class="kv" style="border-top:0;padding-bottom:2px"><span class="small muted">${l}</span><span class="small muted num">${r}</span></div>`;
-  let rows="",gap=null;const flush=()=>{if(gap){rows+=head(gap.a===gap.b?`Week of ${esc(shortDate(gap.a))}`:`Weeks of ${esc(shortDate(gap.a))} – ${esc(shortDate(gap.b))}`,"No shifts");gap=null}};
-  for(let m=top;m>=stop;m=addDays(m,-7)){const end=addDays(m,6),ws=shifts.filter(s=>s.date>=m&&s.date<=end).reverse();
-    if(!ws.length){gap=gap?{a:m,b:gap.b}:{a:m,b:m};continue}flush();
+  const week=(m,label,empty)=>{const ws=shifts.filter(s=>s.date>=m&&s.date<=addDays(m,6));if(!ws.length)return empty?head(label,"No shifts"):"";
     const tot=ws.reduce((a,s)=>{const p=shiftPay(s,w);a.h+=p.mins;a.pay+=p.pay;return a},{h:0,pay:0});
-    rows+=head(`Week of ${esc(shortDate(m))}`,`${r2(tot.h/60)} h · ${money(tot.pay)}`)+ws.map(s=>wkShiftRow(s,w,t)).join("")}
+    return head(label,`${r2(tot.h/60)} h · ${money(tot.pay)}`)+ws.map(s=>wkShiftRow(s,w,t)).join("")};
+  const fold=(key,label,list,body)=>list.length?`<details class="more" data-det="${key}"${editing(list)||S.det.has(key)?" open":""} style="margin-top:8px"><summary>${label} ›</summary><div class="rows menu">${body}</div></details>`:"";
+  /* later rostered weeks, soonest first */
+  const later=shifts.filter(s=>s.date>=m2);let lrows="";
+  if(later.length)for(let m=m2,e=monOf(later[later.length-1].date);m<=e;m=addDays(m,7))lrows+=week(m,`Week of ${esc(shortDate(m))}`,false);
+  /* past weeks, newest first, back 8 weeks; weeks off in a row share one line */
+  const past=shifts.filter(s=>s.date<m0&&s.date>=stop),older=shifts.filter(s=>s.date<stop).reverse();let prows="",gap=null;
+  const flush=()=>{if(gap){prows+=head(gap.a===gap.b?`Week of ${esc(shortDate(gap.a))}`:`Weeks of ${esc(shortDate(gap.a))} – ${esc(shortDate(gap.b))}`,"No shifts");gap=null}};
+  if(past.length)for(let m=addDays(m0,-7),f=monOf(past[0].date);m>=f;m=addDays(m,-7)){const r=week(m,`Week of ${esc(shortDate(m))}`,false);
+    if(!r){gap=gap?{a:m,b:gap.b}:{a:m,b:m};continue}flush();prows+=r}
   flush();
-  const older=shifts.filter(s=>s.date<stop);
+  const n=(k,word)=>`${k} ${word}${k===1?"":"s"}`;
   return `<section class="card"><div class="head"><h2>Shifts</h2>${form?"":`<button class="btn sm primary" data-act="wknew">Add shift</button>`}</div>${form}
-    <div class="rows menu">${rows}</div>${older.length?`<details class="more"><summary>${older.length} older shift${older.length===1?"":"s"} ›</summary><div class="rows menu">${older.map(s=>wkShiftRow(s,w,t)).join("")}</div></details>`:""}</section>`}
-function wkShiftRow(s,w,t){const p=shiftPay(s,w),moved=s.pStart&&(s.pStart!==s.start||s.pEnd!==s.end),v=!s.off&&w.visa.on&&AU()?visaFor(s.date,w):null,over=v&&v.h>(+w.visa.cap||48);
+    <div class="rows menu">${week(m0,"This week",true)}${week(m1,"Next week",true)}</div>
+    ${fold("wklater",`${n(later.length,"more rostered shift")} after next week`,later,lrows)}
+    ${fold("wkpast",`Past shifts · last 8 weeks`,past,prows)}
+    ${fold("wkolder",`${n(older.length,"older shift")}`,older,older.map(s=>wkShiftRow(s,w,t)).join(""))}</section>`}
+function wkShiftRow(s,w,t){if(WK&&WK.f==="shift"&&WK.id&&WK.id===s.id)return `<div class="wkinline">${wkShiftForm(w)}</div>`;const p=shiftPay(s,w),moved=s.pStart&&(s.pStart!==s.start||s.pEnd!==s.end),v=!s.off&&w.visa.on&&AU()?visaFor(s.date,w):null,over=v&&v.h>(+w.visa.cap||48);
   const sub=s.off?`Didn't work${s.reason?" · "+esc(s.reason):""}`:`${p.h} h · ${money(p.pay)}${moved?` · was ${fmtT(s.pStart)} – ${fmtT(s.pEnd)}`:""}${s.reason&&moved?" · "+esc(s.reason):""}`;
   return `<button class="row" data-act="wkedit" data-id="${esc(s.id)}"><div class="main"><div class="t">${shiftLine(s)} · ${s.off?"<s>":""}${fmtT(s.start)} – ${fmtT(s.end)}${s.off?"</s>":""}</div><div class="s">${sub}${s.note?" · "+esc(s.note):""}</div></div>
     ${over?`<span class="pill over">Over visa limit</span>`:s.date>t&&!s.off?`<span class="pill">Rostered</span>`:s.ph?`<span class="pill ok">Public hol</span>`:""}<span class="chev">›</span></button>`}
@@ -2443,6 +2455,8 @@ function wkOpenShift(id){const w=work(),s=w.shifts.find(x=>x.id===id);
 function wkOpenSlip(id,pre){const s=work().slips.find(x=>x.id===id);if(!s&&pre){WK={f:"slip",id:"",payDate:pre.p,from:pre.f,to:pre.t,gross:"",tax:"",err:""};return}
   WK=s?{f:"slip",id:s.id,payDate:s.payDate,from:s.from||"",to:s.to||"",gross:String(s.gross),tax:String(s.tax),err:""}:{f:"slip",id:"",payDate:today(),from:addDays(today(),-16),to:addDays(today(),-3),gross:"",tax:"",err:""}}
 function wkOpenSetup(){const w=work(),sc=wkSched(w);WK={f:"setup",pay:{len:sc.len,lag:sc.lag,anchor:sc.src==="assumed"?"":sc.anchor},rates:Object.assign({},w.rates),brk:Object.assign({},w.brk),medicare:w.medicare!==false,visa:Object.assign({},w.visa),study:w.study.map(p=>Object.assign({},p)),err:""}}
+/* bring the open shift form on screen without jumping the page more than it needs to */
+function wkFormInView(){setTimeout(()=>{const e=$("#wkform");if(e)e.scrollIntoView({block:"nearest",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth"})},60)}
 async function wkDelete(){const f=WK;if(!f||!f.id)return;if(!f.del){readWk();f.del=true;render();return}
   const key=f.f==="shift"?"shifts":"slips";try{await saveWork(w=>{w[key]=w[key].filter(x=>x.id!==f.id)});WK=null;toast(f.f==="shift"?"Shift deleted":"Payslip deleted");render()}catch(e){f.err=dbMsg(e);f.del=false;render()}}
 const TXROW_H=61;/* a row's usual height, so the browser can skip drawing off-screen days in long lists without the page jumping */
@@ -4803,8 +4817,8 @@ document.addEventListener("click",async e=>{
     case "calm":{const n=+a.dataset.n;S.calMonth=n?shiftMonth(S.calMonth||ym(today()),n):ym(today());S.calDay="";render();break}
     case "calday":S.calDay=a.dataset.d;render();break;
     case "wksetup":wkOpenSetup();render();break;
-    case "wknew":wkOpenShift("");render();break;
-    case "wkedit":wkOpenShift(a.dataset.id);render();break;
+    case "wknew":wkOpenShift("");render();wkFormInView();break;
+    case "wkedit":wkOpenShift(a.dataset.id);render();wkFormInView();break;
     case "wkslipnew":wkOpenSlip("");render();break;
     case "wkslipfor":wkOpenSlip("",{f:a.dataset.f,t:a.dataset.t,p:a.dataset.p});render();setTimeout(()=>{const e=$("#wkform");if(e)e.scrollIntoView({block:"center"})},60);break;
     case "wkslipedit":wkOpenSlip(a.dataset.id);render();break;

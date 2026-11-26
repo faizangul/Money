@@ -170,3 +170,29 @@ test("form checks", () => {
 });
 
 function r(n) { return Math.round(n * 100) / 100; }
+
+// The Shifts card: this week and next week open, later rostered weeks and past weeks folded away,
+// and editing a shift opens its form where the row was.
+test("the Shifts card folds past and later weeks, and edits a shift in place", () => {
+  const t = get("today")(), monOf = get("monOf"), card = get("wkShiftsCard"), m0 = monOf(t);
+  const sh = (id, d) => ({ id, date: d, start: "09:00", end: "13:00" });
+  const w = W({ shifts: [sh("p1", addDays(m0, -10)), sh("p2", addDays(m0, -30)), sh("t1", addDays(m0, 2)), sh("n1", addDays(m0, 8)), sh("l1", addDays(m0, 20)), sh("l2", addDays(m0, 40)), sh("o1", addDays(m0, -120))] });
+  get("WK=null");
+  const h = card(w, t);
+  const before = (a, b) => h.indexOf(a) >= 0 && h.indexOf(a) < h.indexOf(b);
+  assert.ok(before("This week", "Next week"));
+  assert.ok(before("Next week", "2 more rostered shifts after next week"));
+  assert.ok(h.includes('data-det="wkpast"') && h.includes("1 older shift"));
+  assert.ok(!/data-det="wkpast" open/.test(h), "past weeks start folded");
+  // the rows for later and past weeks sit inside their folds, not in the open list
+  const open = h.slice(0, h.indexOf("<details"));
+  assert.ok(open.includes('data-id="t1"') && open.includes('data-id="n1"'));
+  assert.ok(!open.includes('data-id="l1"') && !open.includes('data-id="p1"'));
+  // editing a past shift: its fold opens and the form replaces its row; no form at the top
+  get("WK=Object.assign(WK||{f:'shift'},{f:'shift',id:'p1',date:'" + addDays(m0, -10) + "',start:'09:00',end:'13:00',pStart:'09:00',pEnd:'13:00',changed:false,off:false,ph:false,reason:'',note:'',brk:'',brkAt:'',err:''})");
+  const e = card(w, t);
+  assert.ok(/data-det="wkpast" open/.test(e), "the fold holding the shift opens");
+  assert.ok(!e.includes('data-id="p1"') && e.includes('class="wkinline"'));
+  assert.ok(e.indexOf('id="wkform"') > e.indexOf('data-det="wkpast"'), "the form is where the row was");
+  get("WK=null");
+});
